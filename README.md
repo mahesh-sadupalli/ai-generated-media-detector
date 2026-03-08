@@ -135,8 +135,7 @@ ai-generated-media-detector/
 ├── config/                          # Configuration files
 ├── docs/                            # Documentation
 ├── demo_runner.py                   # Interactive demo
-├── requirements.txt                 # Python dependencies
-└── EXECUTION_PLAN.md                # Detailed product roadmap
+└── requirements.txt                 # Python dependencies
 ```
 
 ### Planned Architecture (Phase 1)
@@ -198,56 +197,6 @@ Results on synthetic test data (60 samples, hand-crafted feature detectors):
 | False Positive Rate | < 5% |
 | Inference Latency (GPU) | < 500ms |
 | Inference Latency (CPU) | < 2s |
-
-## Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/mahesh-sadupalli/gan-artifact-detector.git
-cd gan-artifact-detector
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-# venv\Scripts\activate   # Windows
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the demo
-python demo_runner.py
-```
-
-### Requirements
-- Python 3.9+
-- PyTorch 2.0+
-- OpenCV 4.8+
-- See `requirements.txt` for full dependency list
-
-## Usage
-
-### Analyze a single image
-```python
-from src.artifact_detectors.combined_artifact_classifier import GANArtifactClassifier
-import cv2
-
-classifier = GANArtifactClassifier()
-
-img = cv2.imread("path/to/image.jpg")
-img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-result = classifier.analyze_image(img)
-print(result['prediction'])    # "REAL" or "FAKE"
-print(result['confidence'])    # 0.0 - 1.0
-print(result['explanation'])   # Human-readable reasoning
-```
-
-### Analyze a video
-```python
-result = classifier.analyze_video("path/to/video.mp4", max_frames=10)
-print(result['prediction'])
-print(f"Fake frames: {result['fake_frames']}/{result['frames_analyzed']}")
-```
 
 ## License
 
