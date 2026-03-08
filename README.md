@@ -38,6 +38,16 @@ This project takes a research-driven approach to detection: instead of treating 
 | High adversarial artifacts | ~0.779 (mode collapse) | High (correct) |
 | **Score gap** | **~0.14** | Narrow — needs improvement |
 
+## Current Progress: Diffusion Model Detection
+
+Currently implementing diffusion model detection to extend coverage beyond GAN-generated content. Most AI-generated media today comes from diffusion models (Stable Diffusion, Midjourney, DALL-E, Flux), which produce fundamentally different artifacts than GANs.
+
+**What's being built:**
+- DIRE (Diffusion Reconstruction Error) detector — measures how differently a diffusion model reconstructs real vs. AI-generated images
+- Frequency analysis tuned for diffusion model spectral signatures
+- Extending the classifier to 3-class output: real / GAN-generated / diffusion-generated
+- Diffusion-generated test datasets (GenImage, DiffusionDB)
+
 ## Methodology
 
 The detection system is built on a core research insight: different GAN loss function components produce distinct, detectable visual artifacts.
