@@ -40,7 +40,7 @@ This project takes a research-driven approach to detection: instead of treating 
 
 ## Current Progress: Diffusion Model Detection
 
-Currently implementing diffusion model detection to extend coverage beyond GAN-generated content. Most AI-generated media today comes from diffusion models (Stable Diffusion, Midjourney, DALL-E, Flux), which produce fundamentally different artifacts than GANs.
+Currently implementing diffusion model detection to extend coverage beyond GAN-generated content. GANs are optimized for fast image generation, while diffusion models (Stable Diffusion, Midjourney, DALL-E, Flux) are optimized for diverse, high-quality output — each produces fundamentally different artifact signatures that require distinct detection approaches.
 
 **What's being built:**
 - DIRE (Diffusion Reconstruction Error) detector — measures how differently a diffusion model reconstructs real vs. AI-generated images
@@ -99,6 +99,7 @@ Threshold (0.60) --> REAL / FAKE + Explanation
 - **Diffusion model detection** (Stable Diffusion, Midjourney, DALL-E, Flux) via DIRE and diffusion-tuned frequency analysis
 - **Multi-class classification** — real / GAN-generated / diffusion-generated
 - **Deep learning backbone** — EfficientNet-B4 hybrid model with hand-crafted features
+- **Published Python package** — pip-installable library for AI-generated media detection
 - **Production API** — FastAPI backend with async video processing
 - **Web frontend** — Next.js app with drag-and-drop upload and visual heatmaps
 - **Real-world benchmarks** — evaluated on FaceForensics++, CelebDF-v2, DFDC

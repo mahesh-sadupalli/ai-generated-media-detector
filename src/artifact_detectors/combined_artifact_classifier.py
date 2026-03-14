@@ -1,65 +1,88 @@
 import cv2
 import numpy as np
-from typing import Tuple, Dict
-import os
-import sys
-sys.path.append('../utils')
-from simple_face_detection import SimpleFaceDetector
-from smoothing_detector import SmoothingArtifactDetector
-from texture_detector import TextureArtifactDetector
-from mode_collapse_detector import ModeCollapseDetector
+from typing import Dict
+from pathlib import Path
 
-class GANArtifactClassifier:
-    """Combined classifier using all three artifact detectors"""
-    
-    def __init__(self):
+from .smoothing_detector import SmoothingArtifactDetector
+from .texture_detector import TextureArtifactDetector
+from .mode_collapse_detector import ModeCollapseDetector
+from .diffusion_detector import DiffusionArtifactDetector
+from ..utils.simple_face_detection import SimpleFaceDetector
+
+
+class ArtifactClassifier:
+    """Combined classifier using GAN and diffusion artifact detectors.
+
+    Produces a 3-class prediction: REAL / GAN-GENERATED / DIFFUSION-GENERATED,
+    using a weighted ensemble of four hand-crafted detectors.
+
+    Parameters
+    ----------
+    thresholds : dict, optional
+        Override default classification thresholds.
+    """
+
+    def __init__(self, thresholds: Dict[str, float] | None = None) -> None:
+        # GAN detectors
         self.smoothing_detector = SmoothingArtifactDetector()
         self.texture_detector = TextureArtifactDetector()
         self.mode_collapse_detector = ModeCollapseDetector()
-        
-        # Thresholds based on our testing
+
+        # Diffusion detector
+        self.diffusion_detector = DiffusionArtifactDetector()
+
         self.thresholds = {
-            'smoothing': 0.65,  # Above this suggests generated content
-            'mode_collapse': 0.70,  # Above this suggests adversarial artifacts
-            'fake_confidence': 0.60  # Overall fake confidence threshold
+            'smoothing': 0.65,
+            'mode_collapse': 0.70,
+            'diffusion': 0.55,
+            'fake_confidence': 0.60,
         }
-    
+        if thresholds:
+            self.thresholds.update(thresholds)
+
     def analyze_image(self, image: np.ndarray) -> Dict:
-        """
-        Comprehensive artifact analysis of an image
-        
-        Args:
-            image: Face image (224x224x3)
-            
-        Returns:
-            Dictionary with detailed analysis and final prediction
+        """Analyse a single face image for AI-generation artifacts.
+
+        Parameters
+        ----------
+        image : np.ndarray
+            Face image (H, W, 3) in RGB colour space.
+
+        Returns
+        -------
+        dict
+            Prediction, confidence, per-detector scores, details,
+            and human-readable explanation.
         """
         # Run all detectors
-        smoothing_score, smoothing_details = self.smoothing_detector.detect_smoothing_artifacts(image)
-        texture_score, texture_details = self.texture_detector.detect_texture_artifacts(image)
-        collapse_score, collapse_details = self.mode_collapse_detector.detect_mode_collapse_artifacts(image)
-        
-        # Combine scores with weights based on our validation results
-        # Smoothing and mode collapse showed better discrimination
-        overall_score = (
-            0.5 * smoothing_score +
-            0.1 * texture_score +
-            0.4 * collapse_score
+        smoothing_score, smoothing_details = (
+            self.smoothing_detector.detect_smoothing_artifacts(image)
         )
-        
-        # Determine prediction
-        prediction = "FAKE" if overall_score > self.thresholds['fake_confidence'] else "REAL"
-        confidence = overall_score
-        
-        # Identify dominant artifact type
-        artifact_type = "unknown"
-        if smoothing_score > self.thresholds['smoothing']:
-            artifact_type = "pixel_loss_artifacts"
-        elif collapse_score > self.thresholds['mode_collapse']:
-            artifact_type = "adversarial_loss_artifacts"
-        elif smoothing_score > 0.5 and collapse_score > 0.5:
-            artifact_type = "mixed_artifacts"
-        
+        texture_score, texture_details = (
+            self.texture_detector.detect_texture_artifacts(image)
+        )
+        collapse_score, collapse_details = (
+            self.mode_collapse_detector.detect_mode_collapse_artifacts(image)
+        )
+        diffusion_score, diffusion_details = (
+            self.diffusion_detector.detect_diffusion_artifacts(image)
+        )
+
+        # GAN score: weighted combination of GAN-specific detectors
+        gan_score = (
+            0.5 * smoothing_score
+            + 0.1 * texture_score
+            + 0.4 * collapse_score
+        )
+
+        # 3-class decision logic
+        prediction, artifact_type = self._classify(
+            gan_score, diffusion_score, smoothing_score, collapse_score
+        )
+
+        # Overall confidence is the max of the two generation scores
+        confidence = max(gan_score, diffusion_score)
+
         return {
             'prediction': prediction,
             'confidence': confidence,
@@ -68,133 +91,154 @@ class GANArtifactClassifier:
                 'smoothing': smoothing_score,
                 'texture': texture_score,
                 'mode_collapse': collapse_score,
-                'overall': overall_score
+                'diffusion': diffusion_score,
+                'gan_overall': gan_score,
             },
             'details': {
                 'smoothing': smoothing_details,
                 'texture': texture_details,
-                'mode_collapse': collapse_details
+                'mode_collapse': collapse_details,
+                'diffusion': diffusion_details,
             },
             'explanation': self._generate_explanation(
-                prediction, artifact_type, smoothing_score, texture_score, collapse_score
-            )
+                prediction, artifact_type,
+                smoothing_score, texture_score, collapse_score, diffusion_score,
+            ),
         }
-    
+
     def analyze_video(self, video_path: str, max_frames: int = 10) -> Dict:
-        """
-        Analyze video for deepfake artifacts
-        
-        Args:
-            video_path: Path to video file
-            max_frames: Maximum frames to analyze
-            
-        Returns:
-            Dictionary with video-level analysis
+        """Analyse a video for deepfake artifacts.
+
+        Parameters
+        ----------
+        video_path : str
+            Path to video file.
+        max_frames : int
+            Maximum number of frames to sample.
+
+        Returns
+        -------
+        dict
+            Video-level aggregated analysis.
         """
         face_extractor = SimpleFaceDetector()
-        faces = face_extractor.extract_faces_from_video(video_path, max_frames=max_frames)
-        
+        faces = face_extractor.extract_faces_from_video(
+            video_path, max_frames=max_frames
+        )
+
         if not faces:
             return {
-                'prediction': "ERROR",
+                'prediction': 'ERROR',
                 'confidence': 0.0,
-                'explanation': "No faces detected in video"
+                'explanation': 'No faces detected in video',
             }
-        
-        # Analyze each face
-        frame_results = []
-        for i, face in enumerate(faces):
-            result = self.analyze_image(face)
-            frame_results.append(result)
-        
-        # Aggregate results
-        avg_confidence = np.mean([r['confidence'] for r in frame_results])
-        fake_votes = sum(1 for r in frame_results if r['prediction'] == "FAKE")
-        
-        video_prediction = "FAKE" if fake_votes > len(frame_results) / 2 else "REAL"
-        
-        # Identify most common artifact type
-        artifact_types = [r['artifact_type'] for r in frame_results if r['artifact_type'] != "unknown"]
-        most_common_artifact = max(set(artifact_types), key=artifact_types.count) if artifact_types else "unknown"
-        
+
+        frame_results = [self.analyze_image(face) for face in faces]
+
+        avg_confidence = float(
+            np.mean([r['confidence'] for r in frame_results])
+        )
+
+        # Count votes per class
+        votes = {'REAL': 0, 'GAN-GENERATED': 0, 'DIFFUSION-GENERATED': 0}
+        for r in frame_results:
+            pred = r['prediction']
+            votes[pred] = votes.get(pred, 0) + 1
+
+        video_prediction = max(votes, key=votes.get)
+
+        artifact_types = [
+            r['artifact_type'] for r in frame_results
+            if r['artifact_type'] != 'unknown'
+        ]
+        most_common_artifact = (
+            max(set(artifact_types), key=artifact_types.count)
+            if artifact_types else 'unknown'
+        )
+
+        fake_frames = votes.get('GAN-GENERATED', 0) + votes.get('DIFFUSION-GENERATED', 0)
+
         return {
             'prediction': video_prediction,
             'confidence': avg_confidence,
             'artifact_type': most_common_artifact,
             'frames_analyzed': len(faces),
-            'fake_frames': fake_votes,
+            'fake_frames': fake_frames,
+            'votes': votes,
             'frame_results': frame_results,
-            'explanation': f"Video analysis: {fake_votes}/{len(faces)} frames flagged as fake. "
-                          f"Primary artifact type: {most_common_artifact}"
+            'explanation': (
+                f"Video analysis: {fake_frames}/{len(faces)} frames flagged as generated. "
+                f"Verdict: {video_prediction}. "
+                f"Primary artifact type: {most_common_artifact}"
+            ),
         }
-    
-    def _generate_explanation(self, prediction: str, artifact_type: str, 
-                            smoothing: float, texture: float, collapse: float) -> str:
-        """Generate human-readable explanation"""
-        
-        explanation = f"Prediction: {prediction} (confidence: {(smoothing*0.5 + texture*0.1 + collapse*0.4):.3f})\n"
-        
-        if prediction == "FAKE":
-            explanation += "Detected issues:\n"
+
+    def _classify(
+        self,
+        gan_score: float,
+        diffusion_score: float,
+        smoothing_score: float,
+        collapse_score: float,
+    ) -> tuple:
+        """Determine 3-class prediction and artifact type."""
+        threshold = self.thresholds['fake_confidence']
+        diff_threshold = self.thresholds['diffusion']
+
+        # If both scores are below threshold → REAL
+        if gan_score < threshold and diffusion_score < diff_threshold:
+            return 'REAL', 'none'
+
+        # If diffusion score dominates → DIFFUSION-GENERATED
+        if diffusion_score >= diff_threshold and diffusion_score >= gan_score:
+            return 'DIFFUSION-GENERATED', 'diffusion_artifacts'
+
+        # Otherwise → GAN-GENERATED, identify specific artifact type
+        artifact_type = 'unknown'
+        if smoothing_score > self.thresholds['smoothing']:
+            artifact_type = 'pixel_loss_artifacts'
+        elif collapse_score > self.thresholds['mode_collapse']:
+            artifact_type = 'adversarial_loss_artifacts'
+        elif smoothing_score > 0.5 and collapse_score > 0.5:
+            artifact_type = 'mixed_artifacts'
+
+        return 'GAN-GENERATED', artifact_type
+
+    def _generate_explanation(
+        self,
+        prediction: str,
+        artifact_type: str,
+        smoothing: float,
+        texture: float,
+        collapse: float,
+        diffusion: float,
+    ) -> str:
+        """Generate a human-readable explanation."""
+        gan_overall = 0.5 * smoothing + 0.1 * texture + 0.4 * collapse
+        confidence = max(gan_overall, diffusion)
+
+        lines = [f"Prediction: {prediction} (confidence: {confidence:.3f})"]
+
+        if prediction == 'REAL':
+            lines.append("Image appears authentic based on artifact analysis.")
+        elif prediction == 'DIFFUSION-GENERATED':
+            lines.append("Detected diffusion model signatures:")
+            lines.append(f"  - Diffusion artifact score: {diffusion:.3f}")
+            if diffusion > 0.6:
+                lines.append("  - Reconstruction patterns consistent with denoising process")
+            if diffusion > 0.5:
+                lines.append("  - Spectral fingerprint suggests diffusion model origin")
+        else:  # GAN-GENERATED
+            lines.append("Detected GAN generation artifacts:")
             if smoothing > 0.65:
-                explanation += "- High smoothing artifacts suggest pixel-loss optimization\n"
+                lines.append("  - High smoothing artifacts suggest pixel-loss optimization")
             if collapse > 0.70:
-                explanation += "- Mode collapse patterns suggest adversarial training issues\n"
+                lines.append("  - Mode collapse patterns suggest adversarial training issues")
             if texture > 0.50:
-                explanation += "- Texture inconsistencies detected\n"
-            
-            explanation += f"\nDominant artifact type: {artifact_type}"
-        else:
-            explanation += "Image appears authentic based on artifact analysis."
-        
-        return explanation
+                lines.append("  - Texture inconsistencies detected")
 
-def test_combined_classifier():
-    """Test the combined classifier on our dataset"""
-    classifier = GANArtifactClassifier()
-    
-    print("=== COMBINED GAN ARTIFACT CLASSIFIER TEST ===\n")
-    
-    # Test on real video
-    real_video = "../../data/raw/faceforensics/original_sequences/youtube/c23/videos/183.mp4"
-    if os.path.exists(real_video):
-        print("Testing on REAL video:")
-        result = classifier.analyze_video(real_video, max_frames=3)
-        print(f"  Prediction: {result['prediction']}")
-        print(f"  Confidence: {result['confidence']:.3f}")
-        print(f"  Explanation: {result['explanation']}")
-        print()
-    
-    # Test on deepfake video
-    fake_video_dir = "../../data/raw/faceforensics/manipulated_sequences/Deepfakes/c23/videos"
-    if os.path.exists(fake_video_dir):
-        fake_files = [f for f in os.listdir(fake_video_dir) if f.endswith('.mp4')]
-        if fake_files:
-            fake_video = os.path.join(fake_video_dir, fake_files[0])
-            print("Testing on DEEPFAKE video:")
-            result = classifier.analyze_video(fake_video, max_frames=3)
-            print(f"  Prediction: {result['prediction']}")
-            print(f"  Confidence: {result['confidence']:.3f}")
-            print(f"  Explanation: {result['explanation']}")
-            print()
-    
-    # Test on generated samples
-    print("Testing on GENERATED SAMPLES:")
-    for artifact_type in ['high_pixel', 'high_perceptual', 'high_adversarial']:
-        artifact_dir = f"../../data/generated/{artifact_type}"
-        if os.path.exists(artifact_dir):
-            files = [f for f in os.listdir(artifact_dir) if f.endswith('.jpg')]
-            if files:
-                img_path = os.path.join(artifact_dir, files[0])
-                img = cv2.imread(img_path)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                
-                result = classifier.analyze_image(img)
-                print(f"  {artifact_type}:")
-                print(f"    Prediction: {result['prediction']}")
-                print(f"    Confidence: {result['confidence']:.3f}")
-                print(f"    Artifact type: {result['artifact_type']}")
-                print()
+        lines.append(f"Artifact type: {artifact_type}")
+        return '\n'.join(lines)
 
-if __name__ == "__main__":
-    test_combined_classifier()
+
+# Backward compatibility alias
+GANArtifactClassifier = ArtifactClassifier
