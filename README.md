@@ -15,15 +15,15 @@ This project takes a research-driven approach to detection: instead of treating 
 **Stage:** Research Prototype (functional, not production-ready)
 
 **What works:**
-- Three hand-crafted artifact detectors (smoothing, texture, mode collapse)
-- Combined weighted classifier with explainable predictions
+- Four hand-crafted artifact detectors (smoothing, texture, mode collapse, diffusion)
+- 3-class classifier: REAL / GAN-GENERATED / DIFFUSION-GENERATED
 - Face extraction pipeline (OpenCV Haar Cascade)
 - Synthetic test dataset (60 generated samples across 3 artifact types)
-- Working demo script with end-to-end pipeline
+- Video analysis pipeline with per-frame breakdown and diagnostic visualizations
 
 **What's missing:**
 - No trained deep learning model (hand-crafted features only)
-- No diffusion model detection (GAN-only)
+- No compression-aware detection (see [Real-World Testing](#real-world-testing-netanyahu-proof-of-life-video) below)
 - No web interface or API
 - No real-world evaluation on standard benchmarks
 - Simulated artifacts (post-processing heuristics, not real GAN outputs)
@@ -71,20 +71,21 @@ Face Detection (OpenCV Haar Cascade)
     v
 Face Extraction & Normalization (224x224 RGB)
     |
-    +---> Smoothing Detector ---> score [0, 1]    (weight: 0.5)
-    |         FFT, Sobel, texture variance
-    |
-    +---> Texture Detector ----> score [0, 1]     (weight: 0.1)
-    |         LBP, GLCM, spectral entropy
-    |
-    +---> Mode Collapse -------> score [0, 1]     (weight: 0.4)
+    +---> Smoothing Detector -----> score [0, 1]    (weight: 0.5)  ──┐
+    |         FFT, Sobel, texture variance                           │
+    |                                                                ├── GAN Score
+    +---> Texture Detector -------> score [0, 1]    (weight: 0.1)  ──┤
+    |         LBP, GLCM, spectral entropy                           │
+    |                                                                │
+    +---> Mode Collapse ----------> score [0, 1]    (weight: 0.4)  ──┘
     |         Symmetry, autocorrelation
     |
-    v
-Weighted Combination --> Overall Score
+    +---> Diffusion Detector -----> score [0, 1]   ── Diffusion Score
+    |         Reconstruction error, spectral fingerprint,
+    |         noise residual analysis, patch consistency
     |
     v
-Threshold (0.60) --> REAL / FAKE + Explanation
+3-Class Decision --> REAL / GAN-GENERATED / DIFFUSION-GENERATED + Explanation
 ```
 
 ## Scope
@@ -106,17 +107,17 @@ Threshold (0.60) --> REAL / FAKE + Explanation
 
 ## Existing Gaps
 
-1. **No diffusion model coverage** — The biggest gap. Most AI-generated faces today come from diffusion models, which produce fundamentally different artifacts than GANs. The current detectors will miss them.
+1. **Compression-blind detection** — The biggest gap, confirmed by real-world testing. Video codec artifacts (smoothing, uniform noise, detail loss) are indistinguishable from AI-generation artifacts to our hand-crafted features. See [Real-World Testing](#real-world-testing-netanyahu-proof-of-life-video).
 
 2. **Narrow detection margin** — The score gap between real (~0.617) and generated (~0.759) is only 0.14, which means high false positive/negative rates on real-world data.
 
-3. **No trained ML model** — Detection relies entirely on hand-crafted features with manually tuned thresholds. A trained model on real deepfake datasets would significantly improve accuracy.
+3. **No trained ML model** — Detection relies entirely on hand-crafted features with manually tuned thresholds. A trained model on real deepfake datasets would learn to distinguish compression from generation artifacts.
 
-4. **Simulated artifacts only** — The test data is generated via post-processing heuristics, not actual GAN outputs. Results may not generalize to real deepfakes.
+4. **Simulated artifacts only** — The test data is generated via post-processing heuristics, not actual GAN/diffusion outputs. Results may not generalize to real deepfakes.
 
 5. **No cross-dataset evaluation** — No testing on standard benchmarks (FaceForensics++, CelebDF-v2, DFDC), so real-world performance is unknown.
 
-6. **Limited face detection** — Haar Cascade is fast but misses faces at angles, in poor lighting, or with occlusion. A more robust detector (MTCNN, RetinaFace) would improve coverage.
+6. **Limited face detection** — Haar Cascade is fast but misses faces at angles, in poor lighting, or with occlusion. Extracts blurry/partial crops that inflate artifact scores. A more robust detector (MTCNN, RetinaFace) would improve coverage.
 
 7. **Known code bugs** — LBP coordinate swap in texture detector, BGR/RGB color space inconsistency, missing input validation across detectors.
 
@@ -129,7 +130,8 @@ ai-generated-media-detector/
 │   │   ├── smoothing_detector.py    #   FFT + Sobel + texture variance
 │   │   ├── texture_detector.py      #   LBP + GLCM + spectral entropy
 │   │   ├── mode_collapse_detector.py#   Symmetry + autocorrelation
-│   │   └── combined_artifact_classifier.py  # Weighted ensemble
+│   │   ├── diffusion_detector.py   #   DIRE proxy + spectral + noise
+│   │   └── combined_artifact_classifier.py  # 3-class weighted ensemble
 │   ├── artifact_generators/         # Synthetic data generation
 │   │   └── controlled_gan.py        #   Adaptive loss GAN for test data
 │   ├── utils/                       # Shared utilities
@@ -169,6 +171,51 @@ Input Image (224x224)
     v
 Concatenate --> FC Layers --> Output: P(real), P(GAN), P(diffusion)
 ```
+
+## Real-World Testing: Netanyahu Proof-of-Life Video
+
+In March 2026, Israeli PM Netanyahu posted a proof-of-life video at a Jerusalem café after Iranian media claimed his assassination. The video went viral — with online communities and even Grok (X's AI) claiming it was AI-generated. Fact-checkers (Snopes, Reuters) confirmed the video was **authentic**.
+
+We tested our detector on this video as a real-world validation. **The model incorrectly classified it as DIFFUSION-GENERATED (56/74 frames, 0.609 confidence)** — a false positive that reveals critical limitations of hand-crafted feature detection.
+
+### Per-Frame Score Timeline
+
+![Score Timeline](docs/netanyahu_analysis/1_score_timeline.png)
+
+GAN and diffusion scores hover right at the decision thresholds across all 74 frames. The model never reaches high confidence — it's making borderline calls on every frame.
+
+### Score Distributions
+
+![Score Distributions](docs/netanyahu_analysis/2_score_distributions.png)
+
+Both GAN and diffusion score distributions cluster tightly between 0.43-0.65, sitting directly on top of the decision thresholds. There is no separation between the scores — the model has zero discriminative power in this range.
+
+### Diffusion Sub-Detector Breakdown
+
+![Diffusion Breakdown](docs/netanyahu_analysis/3_diffusion_breakdown.png)
+
+**Reconstruction error (red) is the primary culprit** — firing at 0.85-1.0 on nearly every frame. Video codec compression smooths the image in ways that look identical to diffusion model reconstruction to our hand-crafted proxy. Spectral fingerprint and noise residual correctly stay low.
+
+### GAN vs Diffusion Classification Space
+
+![GAN vs Diffusion Scatter](docs/netanyahu_analysis/4_gan_vs_diffusion_scatter.png)
+
+All 74 frames cluster in a tight blob at the intersection of decision boundaries. Frames classified as REAL (green) sit just below the diffusion threshold. The model cannot reliably separate real compressed video from generated content.
+
+### Root Causes Identified
+
+1. **Reconstruction error proxy is compression-blind** — our DIRE proxy (blur → sharpen → measure error) cannot distinguish video codec smoothing from diffusion model smoothing. Compressed video already sits on a "smooth manifold."
+
+2. **Thresholds calibrated on synthetic data** — thresholds (0.55 diffusion, 0.60 GAN) were tuned on 60 synthetic images. Real-world compressed video scores land in a completely different range.
+
+3. **Face detection quality** — Haar Cascade extracts blurry, partial, and sometimes non-face crops. Poor crops amplify smoothing and reconstruction error scores.
+
+### Lessons Learned
+
+- Hand-crafted features hit a ceiling on compressed social media video
+- A trained deep learning model (Phase 2) must see compressed real video during training
+- The 0.14 score gap confirmed insufficient for real-world reliability
+- This is the same class of error that caused Grok to flag the same video as "100% deepfake"
 
 ## Results (Current)
 
