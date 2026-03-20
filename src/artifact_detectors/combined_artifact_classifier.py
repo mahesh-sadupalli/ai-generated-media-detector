@@ -8,6 +8,7 @@ from .texture_detector import TextureArtifactDetector
 from .mode_collapse_detector import ModeCollapseDetector
 from .diffusion_detector import DiffusionArtifactDetector
 from ..utils.simple_face_detection import SimpleFaceDetector
+from ..utils.compression_estimator import CompressionEstimator
 
 
 class ArtifactClassifier:
@@ -30,6 +31,9 @@ class ArtifactClassifier:
 
         # Diffusion detector
         self.diffusion_detector = DiffusionArtifactDetector()
+
+        # Compression estimator (utility, not a detector)
+        self.compression_estimator = CompressionEstimator()
 
         self.thresholds = {
             'smoothing': 0.65,
@@ -68,20 +72,42 @@ class ArtifactClassifier:
             self.diffusion_detector.detect_diffusion_artifacts(image)
         )
 
-        # GAN score: weighted combination of GAN-specific detectors
+        # Estimate compression level and attenuation factor
+        compression_level, compression_details = (
+            self.compression_estimator.estimate_compression(image)
+        )
+        attenuation = self.compression_estimator.get_attenuation_factor(
+            compression_level
+        )
+
+        # Attenuate compression-sensitive sub-scores
+        smoothing_adj = smoothing_score * attenuation
+        recon_adj = diffusion_details['reconstruction_error'] * attenuation
+        noise_adj = diffusion_details['noise_residual'] * attenuation
+
+        # Recompute diffusion score with attenuated sub-scores
+        diffusion_adj = (
+            0.30 * recon_adj
+            + 0.30 * diffusion_details['spectral_fingerprint']
+            + 0.20 * noise_adj
+            + 0.20 * diffusion_details['patch_consistency']
+        )
+        diffusion_adj = float(np.clip(diffusion_adj, 0.0, 1.0))
+
+        # GAN score with attenuated smoothing
         gan_score = (
-            0.5 * smoothing_score
+            0.5 * smoothing_adj
             + 0.1 * texture_score
             + 0.4 * collapse_score
         )
 
-        # 3-class decision logic
+        # 3-class decision uses adjusted scores
         prediction, artifact_type = self._classify(
-            gan_score, diffusion_score, smoothing_score, collapse_score
+            gan_score, diffusion_adj, smoothing_adj, collapse_score
         )
 
         # Overall confidence is the max of the two generation scores
-        confidence = max(gan_score, diffusion_score)
+        confidence = max(gan_score, diffusion_adj)
 
         return {
             'prediction': prediction,
@@ -89,20 +115,25 @@ class ArtifactClassifier:
             'artifact_type': artifact_type,
             'scores': {
                 'smoothing': smoothing_score,
+                'smoothing_adjusted': smoothing_adj,
                 'texture': texture_score,
                 'mode_collapse': collapse_score,
                 'diffusion': diffusion_score,
+                'diffusion_adjusted': diffusion_adj,
                 'gan_overall': gan_score,
+                'compression_level': compression_level,
+                'compression_attenuation': attenuation,
             },
             'details': {
                 'smoothing': smoothing_details,
                 'texture': texture_details,
                 'mode_collapse': collapse_details,
                 'diffusion': diffusion_details,
+                'compression': compression_details,
             },
             'explanation': self._generate_explanation(
                 prediction, artifact_type,
-                smoothing_score, texture_score, collapse_score, diffusion_score,
+                smoothing_adj, texture_score, collapse_score, diffusion_adj,
             ),
         }
 

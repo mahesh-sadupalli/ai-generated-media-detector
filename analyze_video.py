@@ -80,9 +80,9 @@ def analyze_video(video_path: str, max_frames: int = 15,
         print(f"  Frame {i + 1:>2}/{len(faces)}  |  "
               f"Prediction: {result['prediction']:<22s}  |  "
               f"GAN: {scores['gan_overall']:.3f}  "
-              f"Diffusion: {scores['diffusion']:.3f}  "
-              f"Smoothing: {scores['smoothing']:.3f}  "
-              f"Collapse: {scores['mode_collapse']:.3f}")
+              f"Diff: {scores['diffusion']:.3f}->{scores['diffusion_adjusted']:.3f}  "
+              f"Smooth: {scores['smoothing']:.3f}->{scores['smoothing_adjusted']:.3f}  "
+              f"Comp: {scores['compression_level']:.2f}(x{scores['compression_attenuation']:.2f})")
 
     # --- Aggregate ---
     print(f"\n  [3/3] Aggregating results ...\n")
@@ -96,9 +96,13 @@ def analyze_video(video_path: str, max_frames: int = 15,
     avg_confidence = np.mean([r['confidence'] for r in frame_results])
     avg_gan = np.mean([r['scores']['gan_overall'] for r in frame_results])
     avg_diff = np.mean([r['scores']['diffusion'] for r in frame_results])
+    avg_diff_adj = np.mean([r['scores']['diffusion_adjusted'] for r in frame_results])
     avg_smooth = np.mean([r['scores']['smoothing'] for r in frame_results])
+    avg_smooth_adj = np.mean([r['scores']['smoothing_adjusted'] for r in frame_results])
     avg_texture = np.mean([r['scores']['texture'] for r in frame_results])
     avg_collapse = np.mean([r['scores']['mode_collapse'] for r in frame_results])
+    avg_compression = np.mean([r['scores']['compression_level'] for r in frame_results])
+    avg_attenuation = np.mean([r['scores']['compression_attenuation'] for r in frame_results])
 
     print(f"\n  VERDICT:  {verdict}")
     print(f"  Confidence: {avg_confidence:.3f}\n")
@@ -110,10 +114,11 @@ def analyze_video(video_path: str, max_frames: int = 15,
 
     print(f"\n  Average scores:")
     print(f"    GAN overall:    {avg_gan:.3f}")
-    print(f"    Diffusion:      {avg_diff:.3f}")
-    print(f"    Smoothing:      {avg_smooth:.3f}")
+    print(f"    Diffusion:      {avg_diff:.3f} (raw) -> {avg_diff_adj:.3f} (adjusted)")
+    print(f"    Smoothing:      {avg_smooth:.3f} (raw) -> {avg_smooth_adj:.3f} (adjusted)")
     print(f"    Texture:        {avg_texture:.3f}")
     print(f"    Mode collapse:  {avg_collapse:.3f}")
+    print(f"    Compression:    {avg_compression:.3f} (attenuation: x{avg_attenuation:.3f})")
 
     print(f"\n{'=' * 70}\n")
 
@@ -132,9 +137,13 @@ def analyze_video(video_path: str, max_frames: int = 15,
         'avg_scores': {
             'gan_overall': avg_gan,
             'diffusion': avg_diff,
+            'diffusion_adjusted': avg_diff_adj,
             'smoothing': avg_smooth,
+            'smoothing_adjusted': avg_smooth_adj,
             'texture': avg_texture,
             'mode_collapse': avg_collapse,
+            'compression_level': avg_compression,
+            'compression_attenuation': avg_attenuation,
         },
         'frame_results': frame_results,
     }
