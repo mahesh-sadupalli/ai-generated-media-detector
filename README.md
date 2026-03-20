@@ -326,29 +326,15 @@ Results on synthetic test data (60 samples, hand-crafted feature detectors):
 
 The narrow 0.14 score gap between real and generated content means the system is not yet reliable for real-world deployment on hand-crafted features alone. The smoothing detector shows the best single-feature discrimination, while the mode collapse detector is strongest for adversarial-loss artifacts specifically.
 
-### Real-World Testing: Netanyahu Proof-of-Life Video
+### Real-World Testing
 
-In March 2026, Israeli PM Netanyahu posted a proof-of-life video at a Jerusalem cafe after Iranian media claimed his assassination. Fact-checkers (Snopes, Reuters) confirmed the video was **authentic**. We tested our detector as a real-world validation.
+We tested the detector on authentic compressed video sourced from social media to validate real-world performance.
 
-**Before compression awareness:** The model incorrectly classified it as DIFFUSION-GENERATED (56/74 frames, 0.609 confidence). The reconstruction error sub-detector fired at 0.85-1.0 on nearly every frame — video codec compression made the frames appear "smooth" in ways indistinguishable from diffusion model output to our hand-crafted proxy.
+**Before compression awareness:** The model incorrectly classified authentic video as DIFFUSION-GENERATED (56/74 frames, 0.609 confidence). The reconstruction error sub-detector fired at 0.85-1.0 on nearly every frame — video codec compression made the frames appear "smooth" in ways indistinguishable from diffusion model output to our hand-crafted proxy.
 
 **After compression awareness:** The compression estimator detects the heavy codec compression, attenuates the compression-sensitive scores, and the adjusted diffusion score drops below the classification threshold. The system now correctly classifies the video as REAL.
 
 This real-world test exposed the fundamental limitation: hand-crafted features cannot distinguish between "smooth because compressed" and "smooth because AI-generated" without explicitly measuring and accounting for compression level.
-
-### Diagnostic Visualizations
-
-![Score Timeline](docs/netanyahu_analysis/1_score_timeline.png)
-*GAN and diffusion scores across all 74 frames, hovering at the decision thresholds.*
-
-![Score Distributions](docs/netanyahu_analysis/2_score_distributions.png)
-*Score distributions cluster tightly at 0.43-0.65, directly on the thresholds.*
-
-![Diffusion Breakdown](docs/netanyahu_analysis/3_diffusion_breakdown.png)
-*Reconstruction error (red) is the primary culprit — firing at 0.85-1.0 due to codec compression.*
-
-![GAN vs Diffusion Scatter](docs/netanyahu_analysis/4_gan_vs_diffusion_scatter.png)
-*All 74 frames cluster at the intersection of decision boundaries.*
 
 ### Target Metrics (After Deep Learning Integration)
 
