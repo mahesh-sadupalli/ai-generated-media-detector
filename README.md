@@ -1,363 +1,308 @@
 # AI-Generated Media Detector
 
-A research-driven deepfake detection system that identifies AI-generated content by analyzing visual artifacts produced by generative models. The system provides explainable verdicts — not just "real or fake" but *why* content appears artificially generated, with per-artifact breakdowns and confidence scores.
+*A compression-aware deepfake detection system born from research into how neural networks compress, reconstruct, and forget signals.*
 
 ---
 
-## Table of Contents
+## The Problem Nobody Talks About
 
-- [What Is AI-Generated Media?](#what-is-ai-generated-media)
-- [AI-Generated vs. Authentic: How They Differ](#ai-generated-vs-authentic-how-they-differ)
-- [How to Identify AI-Generated Content](#how-to-identify-ai-generated-content)
-- [Current Detection Techniques](#current-detection-techniques)
-- [The Best Approaches Today](#the-best-approaches-today)
-- [How Compressed Media Breaks Detection](#how-compressed-media-breaks-detection)
-- [Weaknesses of Current Techniques](#weaknesses-of-current-techniques)
-- [Our Project](#our-project)
-- [Current Results](#current-results)
-- [Connecting Compression Research to AI Media Detection](#connecting-compression-research-to-ai-media-detection)
-- [Overcoming Compression: Current Research and Our Direction](#overcoming-compression-current-research-and-our-direction)
-- [License](#license)
+AI-generated media is everywhere. Faces that never existed. Videos of people saying things they never said. Voices cloned from seconds of audio. The generators — Stable Diffusion, Midjourney, Sora, Flux — improve every few months, and the gap between real and synthetic is nearly invisible to human eyes.
+
+Naturally, the research community has built detectors. Hundreds of them. They analyze frequency spectra, noise residuals, texture patterns, pixel relationships. In the lab, on clean datasets, these detectors work beautifully — 95%+ accuracy, papers published, benchmarks topped.
+
+Then the content hits the real world.
+
+It gets uploaded to WhatsApp. Compressed at JPEG quality 65. Downscaled. Re-encoded. Shared to Instagram. Compressed again. Downloaded. Reposted to Twitter. Compressed *again*.
+
+By the time a detector sees it, the forensic traces it was trained to find are gone. Not degraded — *gone*. And in their place: compression artifacts that look almost identical to AI-generation artifacts. Block boundaries that mimic face-swap seams. Smoothing that mimics GAN pixel-loss. Quantization noise that mimics diffusion denoising traces.
+
+**Deepfake-Eval-2024** — the most comprehensive in-the-wild benchmark — found that detectors lose **50% of their accuracy** on real social media content compared to lab benchmarks. Fifty percent. On content that actually matters.
+
+This project exists because of a simple observation: **the compression problem and the detection problem are two sides of the same coin**. Both are fundamentally about how information is represented, destroyed, and reconstructed by neural networks. Understanding one gives you the tools to solve the other.
+
+That understanding comes from a master thesis.
 
 ---
 
 ## What Is AI-Generated Media?
 
-AI-generated media — commonly called "deepfakes" or "synthetic media" — refers to any content created or substantially altered by artificial intelligence. This encompasses a broad and growing range of modalities:
+Before we get to the solution, we need to understand what we're detecting.
 
-- **Images** — Photorealistic faces, scenes, and artwork generated from text prompts or from nothing at all. Models like Stable Diffusion, Midjourney, DALL-E, and Flux can produce images indistinguishable from photographs at first glance.
-- **Video** — Face swaps (replacing one person's face with another in video), full-body puppeteering, and entirely synthesized video clips. Tools like Sora, Runway, and Kling generate increasingly convincing moving imagery.
-- **Voice and Speech** — Cloned voices that replicate a specific person's vocal characteristics, tone, and cadence from just seconds of sample audio. Text-to-speech (TTS) systems and voice conversion models can now produce speech that fools both humans and traditional audio analysis.
-- **Music** — AI-composed musical pieces that mimic specific genres, instruments, or even individual artists' styles.
-- **Text** — Large language models (LLMs) generate coherent, contextually appropriate text across any domain, from news articles to academic papers to social media posts.
+AI-generated media — deepfakes, synthetic media — is any content created or substantially altered by artificial intelligence. The scope is broader than most people realize:
 
-The common thread across all modalities: generative AI models learn statistical patterns from training data and produce new content that *looks* like it belongs to the same distribution. The quality has improved dramatically — in 2020, AI-generated faces had obvious tells; by 2025, state-of-the-art generators fool human observers over 50% of the time.
+**Images** — Photorealistic faces, scenes, and artwork from text prompts. Stable Diffusion, Midjourney, DALL-E, and Flux produce images indistinguishable from photographs at first glance.
+
+**Video** — Face swaps, full-body puppeteering, entirely synthesized clips. Sora, Runway, and Kling generate increasingly convincing motion.
+
+**Voice and Speech** — Cloned voices from seconds of sample audio. Text-to-speech systems that fool both humans and traditional analysis.
+
+**Music** — AI-composed pieces mimicking specific genres, instruments, or artists.
+
+**Text** — Large language models generating coherent text across any domain, from news to academic papers.
+
+The common thread: generative models learn statistical patterns from training data and produce new content that *appears* to belong to the same distribution. By 2025, state-of-the-art generators fool human observers over 50% of the time.
 
 ### Why It Matters
 
-The implications extend far beyond academic curiosity:
+- **Misinformation** — Fabricated videos of public figures, deployed at scale during elections
+- **Fraud** — Voice cloning in CEO fraud schemes, costing millions in unauthorized transfers
+- **Identity theft** — Synthetic faces bypassing KYC verification, creating fake profiles
+- **Interview fraud** — Real-time face-swapping during job interviews
+- **Non-consensual content** — AI-generated intimate imagery of real people
 
-- **Misinformation** — Fabricated videos of public figures saying things they never said, deployed at scale during elections and geopolitical crises
-- **Fraud and Scams** — Voice cloning used in CEO fraud schemes, costing companies millions in unauthorized wire transfers
-- **Identity Theft** — Synthetic faces used to bypass KYC (Know Your Customer) verification, create fake social media profiles, and produce fraudulent identity documents
-- **Interview Fraud** — Candidates using real-time face-swapping and AI voice assistants during job interviews to misrepresent their identity or capabilities
-- **Non-consensual Content** — AI-generated intimate imagery of real people, a growing legal and ethical crisis
-
-Deepfake incidents have grown 400%+ year-over-year, and governments worldwide are responding with regulation (EU AI Act, US DEFIANCE Act, China's Deep Synthesis Provisions).
+Deepfake incidents grow 400%+ year-over-year. Governments are responding: EU AI Act, US DEFIANCE Act, China's Deep Synthesis Provisions.
 
 ---
 
-## AI-Generated vs. Authentic: How They Differ
+## How AI-Generated Content Differs from Real Content
 
-Despite their visual quality, AI-generated media differs from authentic content at multiple levels. Understanding *why* these differences exist requires understanding how generative models work.
+Every generative model leaves traces — subtle signatures embedded as a byproduct of how it creates content. These are the fingerprints detection systems target.
 
-### The Generation Process Leaves Traces
+### GAN Artifacts
 
-Every generative model introduces artifacts — subtle signatures embedded in the output as a byproduct of how the model creates content. These artifacts are the fingerprints that detection systems target.
+Generative Adversarial Networks optimize a minimax game between generator and discriminator. Each loss component produces distinct artifacts:
 
-**Generative Adversarial Networks (GANs)** optimize a minimax game between a generator and discriminator. The loss function components each produce distinct artifacts:
-
-| Loss Component | What It Does | Artifact Produced |
+| Loss Component | Purpose | Artifact |
 |---|---|---|
-| Pixel loss (L1/L2) | Minimizes per-pixel difference | Over-smoothing, blurriness, loss of fine detail |
-| Perceptual loss (VGG) | Matches high-level feature representations | Texture inconsistencies, unnatural micro-patterns |
-| Adversarial loss | Fools the discriminator network | Mode collapse (repetitive patterns), spatial repetition |
+| Pixel loss (L1/L2) | Minimize per-pixel difference | Over-smoothing, blurriness |
+| Perceptual loss (VGG) | Match high-level features | Texture inconsistencies |
+| Adversarial loss | Fool discriminator | Mode collapse, spatial repetition |
 
-GANs also introduce **spectral artifacts** from their upsampling layers — convolutional transpose operations create characteristic checkerboard patterns visible in the frequency domain (FFT), even when invisible to the naked eye.
+GANs also produce spectral artifacts from upsampling layers — checkerboard patterns visible in FFT, invisible to the eye.
 
-**Diffusion Models** (Stable Diffusion, DALL-E, Midjourney, Flux) work differently — they iteratively denoise random noise into coherent images via a learned denoising U-Net. Their artifacts are subtler:
+### Diffusion Model Artifacts
 
-| Artifact Type | Origin | Characteristic |
+Diffusion models (Stable Diffusion, DALL-E, Midjourney) iteratively denoise random noise via a U-Net. Their artifacts are subtler:
+
+| Artifact | Origin | Signature |
 |---|---|---|
-| Reconstruction patterns | U-Net bottleneck limitations | Mid-frequency energy dip in the spectral profile |
-| Denoising traces | Incomplete denoising at final step | Spatially uniform noise residuals (more Gaussian than camera noise) |
-| Patch boundary effects | Local receptive fields in the U-Net | Subtle texture transitions at patch boundaries |
-| Spectral fingerprint | Architecture-specific frequency response | More uniform power spectrum than natural images |
+| Reconstruction patterns | U-Net bottleneck | Mid-frequency spectral dip |
+| Denoising traces | Incomplete final step | Spatially uniform Gaussian noise |
+| Patch boundaries | Local receptive fields | Texture transitions between patches |
+| Spectral fingerprint | Architecture response | Unusually uniform power spectrum |
 
-**Key insight**: GAN artifacts tend to be localized and repetitive; diffusion artifacts tend to be global and statistical. Detecting both requires fundamentally different analysis approaches.
+### Across Other Modalities
 
-### Beyond Visual Content
-
-The same principle applies across modalities:
-
-- **AI-generated text** lacks the statistical irregularities of human writing — it exhibits more uniform perplexity, less stylistic drift, and distinctive token-frequency distributions
-- **Cloned voices** show anomalies in formant transitions, breathing patterns, micro-pauses, and pitch contour naturalness
-- **AI-generated music** often lacks the micro-timing variations, dynamic expression, and harmonic surprises characteristic of human performance
-- **Synthesized video** introduces temporal inconsistencies — flickering in fine details across frames, unnatural eye-blink rates, and lip-sync misalignment
+- **Text** — More uniform perplexity, less stylistic drift, distinctive token frequencies
+- **Voice** — Anomalies in formant transitions, breathing, micro-pauses, pitch contour
+- **Music** — Missing micro-timing variations, dynamic expression, harmonic surprises
+- **Video** — Temporal flickering, unnatural blink rates, lip-sync misalignment
 
 ---
 
-## How to Identify AI-Generated Content
+## How Detection Works
 
-Detection operates across a spectrum from human intuition to automated analysis.
+Detection operates from human intuition to signal-level analysis.
 
 ### What Humans Can Spot
 
-Trained observers look for:
-- **Anatomical errors** — Extra or missing fingers, asymmetric ears, impossible teeth geometry, deformed accessories (earrings, glasses)
-- **Texture inconsistencies** — Hair that looks painted rather than strand-like, skin with waxy or overly smooth texture, inconsistent pore patterns
-- **Lighting and shadow violations** — Light sources that don't match between the subject and background, shadows that don't correspond to the light direction
-- **Background incoherence** — Text that looks like a foreign alphabet, architecture that defies physics, repeating patterns in crowds or foliage
-- **Temporal artifacts (video)** — Flickering around face boundaries, unnatural blinking, teeth/tongue rendering that changes frame-to-frame
-
-However, human detection is unreliable. Studies consistently show that untrained observers perform near chance (50%) on high-quality AI-generated images, and even trained observers plateau around 60-70% accuracy on state-of-the-art generators.
+Extra fingers. Waxy skin. Shadows that don't match. Text that looks like a foreign alphabet. Teeth that change between frames. But human detection is unreliable — untrained observers perform near chance (50%), trained observers plateau around 60-70%.
 
 ### What Automated Systems Can Detect
 
-Automated detection goes beyond what the human eye can perceive, analyzing content at the signal processing level:
+1. **Frequency domain analysis** — AI images have distinctive spectral profiles. GANs produce periodic peaks from upsampling; diffusion models show mid-frequency energy anomalies.
 
-1. **Frequency domain analysis** — AI-generated images have distinctive power spectral profiles. GANs produce periodic peaks from upsampling; diffusion models show characteristic mid-frequency energy distributions.
+2. **Noise residual analysis** — Camera sensors have unique noise fingerprints (PRNU). AI noise is more Gaussian, more uniform, with different kurtosis.
 
-2. **Noise residual analysis** — Every camera sensor has a unique noise fingerprint (Photo Response Non-Uniformity, or PRNU). AI-generated images have synthetic noise with different statistical properties: more Gaussian, more spatially uniform, and with different kurtosis than real camera noise.
+3. **Reconstruction error** — Pass an image through blur-sharpen or diffusion forward-reverse. Real images change more than AI content, which already lies on the model's learned manifold (DIRE, ICCV 2023).
 
-3. **Reconstruction error analysis** — Inspired by DIRE (Diffusion Reconstruction Error): passing an image through a reconstruction pipeline (blur-sharpen, or diffusion model forward-reverse) and measuring the difference. Real images change more than AI-generated ones, because AI content already lies close to the model's learned manifold.
+4. **Texture statistics** — GLCM, Local Binary Patterns, spectral entropy reveal micro-texture properties that differ between real and synthesized content.
 
-4. **Local Binary Patterns and texture statistics** — GLCM (Gray-Level Co-occurrence Matrix), LBP (Local Binary Patterns), and spectral entropy measurements reveal micro-texture properties that differ between real and synthesized content.
+5. **Neighboring pixel relationships** — Upsampling creates pixel correlations absent in camera images (NPR, CVPR 2024).
 
-5. **Neighboring pixel relationships** — Upsampling operations in both GANs and diffusion models create correlations between neighboring pixels that don't exist in camera-captured images (NPR, CVPR 2024).
+6. **Semantic features** — Foundation models like CLIP encode high-level features that capture "realness" at a semantic level.
 
-6. **Semantic feature analysis** — Foundation models like CLIP encode high-level features that capture "realness" vs. "synthetic-ness" at a semantic level, even surviving heavy post-processing.
-
-7. **Audio-visual consistency** — For video deepfakes, the synchronization between lip movements and speech (lip-sync), eye gaze patterns, blink rates, and micro-expressions provide multi-modal verification signals.
+7. **Audio-visual consistency** — Lip-sync, gaze patterns, blink rates, micro-expressions.
 
 ---
 
 ## Current Detection Techniques
 
-The landscape of AI-generated media detection has evolved rapidly from 2019 to 2025. Current techniques fall into several categories.
+### Hand-Crafted Features
+FFT, Sobel, LBP, GLCM, autocorrelation. Interpretable, fast, explainable. But narrow, fragile under compression, manually tuned.
 
-### Hand-Crafted Feature Approaches
+### Deep Learning
+XceptionNet, EfficientNet-B4, Vision Transformers. High accuracy on in-distribution data. But poor generalization, black-box, needs large datasets.
 
-These use domain knowledge of generative model artifacts to design specific signal-processing features:
-- **FFT/DCT frequency analysis** for spectral anomalies
-- **Sobel edge detection and texture variance** for smoothing artifacts
-- **Autocorrelation and symmetry analysis** for mode collapse patterns
-- **LBP/GLCM** for texture micro-pattern analysis
+### Foundation Models
+CLIP-based detection (Cozzolino et al., CVPRW 2024): a linear probe on frozen CLIP features generalizes across generators with +13% AUC on compressed data. DINOv2 (Pellegrini, 2025): 97.36% AUROC. UnivFD (Ojha et al., CVPR 2023): +19.49 mAP on unseen generators.
 
-**Strengths**: Interpretable, fast, no training required, explainable verdicts.
-**Weaknesses**: Narrow detection range, fragile under compression, manually tuned thresholds.
+### Frequency-Domain
+FIRE (CVPR 2025): mid-frequency reconstruction error, 100% AUC on DiffusionForensics. HiFE (ESWA 2024): three-branch high-frequency enhancement. WaveDIF (CVPRW 2025): wavelet sub-band energy features.
 
-### Deep Learning Approaches
+### Continual Learning
+GPL (ICCV 2025): 92.14% with hyperbolic alignment. DevFD (NeurIPS 2025): orthogonal LoRA adapters. DARW (2025): 0.9574 AUC with domain-aware replay.
 
-Learned feature extractors that discover discriminative patterns from data:
-- **XceptionNet** (FaceForensics++, 2019) — The early standard, trained on four manipulation types
-- **EfficientNet-B4** — Strong backbone for face manipulation detection
-- **Vision Transformers (ViT)** — Self-attention captures global artifacts that CNNs miss
-
-**Strengths**: High accuracy on in-distribution data, can learn subtle patterns.
-**Weaknesses**: Poor generalization to unseen generators, black-box decisions, requires large labeled datasets.
-
-### Foundation Model Approaches
-
-Pre-trained vision-language models adapted for detection:
-- **CLIP-based detection** (Cozzolino et al., CVPRW 2024) — A single linear layer on frozen CLIP features, trained on a handful of images from one generator, achieves state-of-the-art cross-generator generalization
-- **DINOv2 backbone** (Pellegrini et al., 2025) — Self-supervised ViT features achieve 97.36% AUROC with strong robustness
-- **UnivFD** (Ojha et al., CVPR 2023) — CLIP feature space with nearest-neighbor detection, achieving +19.49 mAP on unseen generators
-
-**Strengths**: Strong generalization, inherent compression robustness (semantic features survive post-processing), minimal training data needed.
-**Weaknesses**: Requires large pre-trained backbone at inference, limited spatial localization.
-
-### Frequency-Domain Architectures
-
-Designed to exploit spectral forensic cues:
-- **FIRE** (Chu et al., CVPR 2025) — Frequency-guided reconstruction error targeting mid-frequency bands; achieves 100% AUC on DiffusionForensics benchmark
-- **HiFE** (Gao et al., ESWA 2024) — Three-branch architecture with local and global high-frequency enhancement
-- **WaveDIF** (Dutta et al., CVPRW 2025) — Wavelet sub-band energy features for lightweight frequency-domain detection
-
-**Strengths**: Robust to common perturbations, capture forensic cues invisible in spatial domain.
-**Weaknesses**: Compression can destroy the high-frequency cues they rely on; mid-frequency methods are more resilient than high-frequency ones.
-
-### Continual Learning Frameworks
-
-Address the evolving generator landscape — new generative models appear faster than detectors can be retrained:
-- **GPL** (Zhang et al., ICCV 2025) — Hyperbolic visual alignment with gradient projection, achieving 92.14% accuracy with minimal forgetting
-- **DevFD** (NeurIPS 2025) — Orthogonal LoRA Mixture of Experts, adding lightweight adapters for each new generator family
-- **DARW** (Shen et al., 2025) — Domain-aware generative replay achieving 0.9574 AUC under mixed-era evaluation
-
-**Strengths**: Can adapt to new generators without forgetting old ones.
-**Weaknesses**: Almost no work evaluates under realistic compression conditions — a critical blind spot.
+**Every single one of these** shares the same Achilles' heel.
 
 ---
 
-## The Best Approaches Today
+## The Wall: How Compression Destroys Detection
 
-No single method dominates across all scenarios. The most effective detection strategies combine multiple complementary approaches.
+This is where most detection stories end. It's where ours begins.
 
-### For Cross-Generator Generalization
+![How compression destroys detection](docs/diagrams/compression_destroys_detection.svg)
 
-**CLIP-based detection** is currently the strongest approach for detecting AI-generated content from previously unseen generators. Cozzolino et al. (CVPRW 2024) demonstrated that a simple linear probe on frozen CLIP ViT-L/14 features:
-- Outperforms specialized detectors by +6% AUC on out-of-distribution generators
-- Achieves +13% AUC improvement on impaired/laundered data (compressed, resized, cropped)
-- Is "basically insensitive to compression, no matter JPEG or WebP, and resizing"
+Every piece of media on the internet has been compressed — typically multiple times. Camera H.264 encoding. Editing software re-encoding. Platform upload compression. Download transcoding. Each pass destroys forensic traces while injecting compression artifacts that masquerade as generation artifacts.
 
-The reason: CLIP features encode high-level semantic properties that are generator-agnostic. While GAN fingerprints and diffusion spectral signatures are generator-specific (and fragile), the semantic gap between real and synthetic content is more universal.
+### What Compression Does to Each Approach
 
-### For Compression Robustness
+**Hand-crafted features** are most vulnerable. FFT frequency analysis, Sobel edges, texture variance — all operate on high-frequency signals that compression directly targets. Smoothing detectors fire on compressed authentic video because compression reduces texture variance identically to pixel-loss GAN artifacts.
 
-**FIRE** (Frequency-guided Reconstruction Error) explicitly targets the mid-frequency band — the spectral range that survives common compression but still carries forensic signal. This "sweet spot" insight is the key finding across multiple 2024-2025 studies: low frequencies survive compression but lack discriminative power; high frequencies are destroyed; mid-frequencies carry the best balance.
+**Deep learning models** trained on clean data show 10-25% absolute AUC drops. FaceForensics++ at QP 23 vs QP 40: from >90% to below 75%. The learned pixel patterns don't survive re-encoding.
 
-### For Production Deployment
+**Frequency-domain methods** face a paradox: their operating domain is compression's primary target. Only mid-frequency approaches (FIRE) maintain robustness.
 
-**Multi-signal fusion** — combining foundation model features (semantic level), frequency-domain analysis (structural level), and compression-aware normalization (robustness layer) — is the emerging consensus architecture. The best systems don't rely on a single detector but use ensembles where each component covers a different failure mode.
+**Foundation models** are most resilient — CLIP features survive compression because they're semantic. But they sacrifice spatial localization.
+
+### Platform-by-Platform Damage
+
+| Platform | Compression | Detection Impact |
+|---|---|---|
+| WhatsApp | JPEG QF ~65, heavy downscaling, H.264 | Severe (>30% AP loss) |
+| Instagram | JPEG QF ~75, 1080px cap, H.264/H.265 | Moderate-high |
+| Twitter/X | JPEG, PNG-to-JPEG, H.264 | Moderate |
+| TikTok | H.264/H.265, heavy re-encoding | Severe |
+| YouTube | VP9/AV1, multi-resolution ladder | Moderate |
+
+### The Four Destruction Mechanisms
+
+**1. High-frequency artifact destruction** — GAN checkerboard patterns, noise fingerprints, texture micro-patterns reside in high-frequency DCT coefficients. Quantized to zero at JPEG QF < 80. Effectively laundered.
+
+**2. Block boundary confusion** — 8x8 and 16x16 DCT block boundaries produce discontinuities that detectors confuse with face-swap seams. False positives increase.
+
+**3. Smoothing mimics generation** — Compression reduces texture variance and local intensity variation — the exact same signals smoothing detectors use to flag GAN artifacts. Indistinguishable.
+
+**4. Noise profile normalization** — Camera sensor noise replaced by Gaussian quantization noise — the same statistical signature that noise residual detectors flag as diffusion-generated.
+
+**The result:** Deepfake-Eval-2024 found detectors lose 50% of their AUC on real social media content. The best in-the-wild video methods top out at AUC 0.65-0.70. One in three verdicts is wrong.
 
 ---
 
-## How Compressed Media Breaks Detection
+## Other Weaknesses of Current Techniques
 
-Every technique described above — hand-crafted features, deep learning models, frequency-domain architectures, even foundation model approaches — faces a common enemy: **lossy compression**. Understanding this problem is essential because virtually all media encountered in the real world has been compressed, often multiple times.
+Beyond compression, several deployment blockers remain:
 
-### The Compression Pipeline
+**Generator arms race** — New models appear faster than detectors adapt. A detector trained on StyleGAN2 may hit 95% on that generator and drop to 50% (random) on Stable Diffusion 3. Fontana et al. (2025) showed forward-transfer AUC drops to ~0.5 within 3 unseen generators.
 
-Every piece of media you encounter online has passed through multiple compression stages:
+**Neural compression confounds** — JPEG AI (ISO standard, February 2025) introduces neural codec artifacts that resemble generative model artifacts. Pristine JPEG AI-compressed images trigger up to 96% false positive rates in existing detectors (Cannas et al., ICCV 2025 Workshop).
 
-1. **Camera codec** — H.264/H.265 in-camera compression during recording
-2. **Editing software** — Re-encoding during editing or export
-3. **Platform upload** — Social media platforms apply their own aggressive compression (WhatsApp: JPEG QF ~60-70 + heavy downscaling; Instagram: QF ~70-85 + resolution capping; YouTube: VP9/AV1 re-encoding)
-4. **Download** — Additional transcoding for the viewer's device/bandwidth
+**Lack of explainability** — Most high-accuracy detectors are black boxes. For legal evidence, HR decisions, or journalism, a score alone isn't enough.
 
-Each step destroys forensic information. The high-frequency artifacts that detectors rely on — GAN spectral peaks, noise residual patterns, subtle texture inconsistencies — are the first casualties of lossy compression. Meanwhile, compression *introduces its own artifacts* (block boundaries, quantization noise, detail loss, posterization) that look remarkably similar to AI-generation artifacts.
+**Evaluation fragmentation** — Different papers, different datasets, different protocols. Fair comparison is nearly impossible.
 
-### How Each Detection Approach Is Affected
+---
 
-**Hand-crafted features** are the most vulnerable. FFT frequency analysis, Sobel edge detection, and texture variance all operate on high-frequency signals that compression directly targets. Our own testing confirmed this: the smoothing detector fires on compressed authentic video because compression reduces texture variance and local standard deviation — the exact same signals that pixel-loss GAN artifacts produce. The noise residual detector fires because codec quantization noise is Gaussian and spatially uniform — the same statistical signature as diffusion model denoising traces.
+## Where the Thesis Comes In
 
-**Deep learning models** trained on raw or lightly compressed data show dramatic degradation. FaceForensics++ provides the canonical benchmark: most detectors maintain >90% AUC at QP 23 (light compression) but fall below 75% at QP 40 (heavy compression) — a 10-25% absolute AUC drop from moderate video compression alone. The models learn fragile pixel-level patterns that don't survive re-encoding.
+Here is the turn in this story. The detection community has been treating compression as a nuisance — something to augment against during training, to hope features survive. But compression isn't a nuisance. It's the *central problem*. And it's a problem with deep mathematical structure that a different field of research has been studying intensively.
 
-**Frequency-domain methods** face a paradox: the very domain they operate in is what compression targets. High-frequency forensic cues (GAN checkerboard patterns, upsampling artifacts) are quantized to zero at JPEG QF < 80. Only methods targeting mid-frequency bands (DCT coefficients 8-32), like FIRE, maintain robustness — but at the cost of reduced sensitivity to subtle artifacts.
+The lead researcher's master thesis — *"Concurrent Neural Network Training for Compression of Spatio-Temporal Data"* at BTU Cottbus-Senftenberg — studied exactly this: how neural networks compress signals, how they reconstruct them, what information survives, and what gets destroyed. Not on images — on 4D computational fluid dynamics data (7.9 million samples of vortex shedding simulation: velocity, pressure, turbulent kinetic energy across 26,397 spatial points and 300 timesteps), where the stakes are precision engineering.
 
-**Foundation model approaches** (CLIP, DINOv2) are the most resilient because they encode semantic features rather than pixel-level signals. Cozzolino et al. (CVPRW 2024) showed CLIP-based detectors are "basically insensitive to compression." However, they sacrifice spatial localization and fine-grained artifact analysis.
+The thesis compared three fundamentally different neural compression architectures, then pushed the best one into a streaming setting where it had to learn continuously — and discovered exactly how and why neural networks forget.
 
-### The Numbers: Platform-by-Platform Impact
+### The Three Architectures
 
-| Platform | Image Compression | Video Compression | Detection Impact |
+The thesis didn't just test one approach. It systematically compared three neural compression strategies on the same dataset, each revealing different aspects of how networks represent signals:
+
+**Implicit Neural Representations (INRs)** — Tiny MLP networks (6,692 to 25,668 parameters) that learn to map coordinates `(x, y, z, t)` directly to signal values `(Vx, Vy, Pressure, TKE)`. No pixels, no grids — pure continuous function approximation. The entire 7.9 million-sample dataset is encoded in a network weighing just 26 to 100 KB.
+
+**Convolutional Autoencoders** — The data is interpolated to a 32x128 grid and treated as 4-channel images. A conv encoder compresses each timestep to a compact latent vector; the decoder reconstructs it.
+
+**Linear Autoencoders** — Each spatial point's full temporal sequence (300 timesteps x 4 variables = 1,200 features) is compressed to a low-dimensional latent code.
+
+| Approach | Model | Parameters | PSNR | SSIM | Compression | Training |
+|---|---|---|---|---|---|---|
+| **INR** Base | 4→64→64→32→4 | 6,692 | 31.24 dB | 0.9748 | Extreme* | 3.2 hrs |
+| **INR** Medium | 4→96→96→48→4 | 14,644 | 34.18 dB | 0.9853 | Extreme* | 3.2 hrs |
+| **INR** Large | 4→128→128→64→4 | 25,668 | 35.72 dB | 0.9823 | Extreme* | 3.2 hrs |
+| **Conv AE** Base | latent=32 | 328,900 | 30.67 dB | 0.9574 | 93.6:1 | 19.9s |
+| **Conv AE** Medium | latent=64 | 1,307,012 | 32.75 dB | 0.9723 | 23.9:1 | 16.4s |
+| **Linear AE** Base | latent=16 | 686,016 | 36.23 dB | 0.9697 | 28.6:1 | 57.3s |
+| **Linear AE** Medium | latent=32 | 1,567,696 | 37.90 dB | 0.9719 | 13.1:1 | 62.0s |
+
+*INR compression ratio depends on dataset size vs. model size — 6,692 parameters encoding 7.9M samples.*
+
+Each architecture taught something different. The Linear AE achieved the highest reconstruction quality (37.90 dB). The Conv AE achieved the best compression-quality tradeoff (93.6:1 at 30.67 dB). But the INRs were unique: tiny models learning continuous functions, with compression ratios that scale with dataset size. And only the INRs were suitable for the streaming experiment that uncovered the thesis's central finding.
+
+### The Streaming Experiment: When Networks Forget
+
+The offline results above assume you have all the data upfront. In the real world — and in detection — data arrives sequentially. New timesteps. New generators. New compression pipelines. The model must adapt without forgetting what it learned before.
+
+The thesis trained INRs in an online streaming setting: 20 temporal windows arriving sequentially, 100 epochs per window. The model sees each window, trains on it, then moves to the next — never revisiting old data.
+
+What happened was devastating:
+
+| Model | Offline PSNR | Online Naive PSNR | Forgetting |
 |---|---|---|---|
-| WhatsApp | JPEG QF ~60-70, heavy downscaling | H.264, aggressive bitrate | Severe (>30% AP loss) |
-| Instagram | JPEG QF ~70-85, 1080px cap | H.264/H.265, variable bitrate | Moderate-high |
-| Twitter/X | JPEG, PNG-to-JPEG conversion | H.264 re-encoding | Moderate |
-| TikTok | — | H.264/H.265, heavy re-encoding | Severe |
-| YouTube | — | VP9/AV1, multi-resolution | Moderate |
+| Base (6,692 params) | 32.15 dB | 14.90 dB | **-17.25 dB** |
+| Medium (14,644 params) | 33.58 dB | 13.38 dB | **-20.20 dB** |
+| Large (25,668 params) | 35.99 dB | 13.18 dB | **-22.81 dB** |
 
-These pipelines result in a **15-20% average precision decrease** for detection models compared to uncompressed evaluation (Montibeller et al., ACM DFW 2025). The compression parameters also change over time as platforms update their infrastructure, meaning a detector calibrated for today's WhatsApp pipeline may fail on next month's.
+The Large model — the one with the most capacity, the one you'd expect to handle this best — forgot the most. 22.81 dB of quality destroyed. The Base model, with 4x fewer parameters, retained more knowledge. **More capacity means more flexibility to overwrite previous knowledge.** This is the opposite of what intuition suggests.
 
-### The Four Mechanisms of Forensic Destruction
+The per-window trajectory tells the story: performance peaks around windows 7-8 (reaching 23-25 dB), then collapses as the model overwrites earlier knowledge to fit later windows. By window 20, the full-dataset evaluation shows quality has cratered to near-useless levels.
 
-1. **High-frequency artifact destruction** — GAN upsampling artifacts (checkerboard patterns), noise fingerprints, and texture micro-patterns reside in high-frequency DCT coefficients. JPEG quantization sets these to zero at QF < 80. After social media compression, these traces are effectively laundered.
+**For detection:** This is exactly what happens when you fine-tune a large detector on new generators. StyleGAN detection: great. Fine-tune on Stable Diffusion: now it forgets StyleGAN. Fine-tune on Flux: forgets both. The thesis quantified this precisely — and proved that model size makes it *worse*, not better.
 
-2. **Block boundary confusion** — JPEG and video codecs partition frames into 8x8 or 16x16 blocks for DCT processing. At low quality, the block boundaries produce visible discontinuities that detectors confuse with face-swap boundary artifacts, inflating false positive rates.
+### Only Experience Replay Survives
 
-3. **Smoothing mimics generation** — Compression reduces high-frequency content, texture variance, and local intensity variation. These are the exact same signals that smoothing detectors use to identify pixel-loss GAN artifacts. The detector literally cannot tell the difference between "smooth because compressed" and "smooth because AI-generated."
+The thesis tested continual learning strategies to fight the forgetting. The results were unambiguous:
 
-4. **Noise profile normalization** — Compression replaces camera-specific sensor noise with codec-specific quantization noise, which happens to be more Gaussian and spatially uniform — the same statistical signature that noise residual detectors flag as diffusion-model-generated.
+| Strategy | Config | Base PSNR | Medium PSNR | Large PSNR | Best Recovery |
+|---|---|---|---|---|---|
+| **Naive** (no CL) | — | 14.90 dB | 13.38 dB | 13.18 dB | — |
+| **ER Scaled** | 50K buffer, 0.7 weight | 21.47 dB | 21.98 dB | 22.03 dB | +8.85 dB (Large) |
+| **ER Aggressive** | 100K buffer, 1.0 weight | 21.60 dB | **23.27 dB** | 23.19 dB | **+9.89 dB (Medium)** |
 
-### The Result
+EWC (Elastic Weight Consolidation) provided negligible improvement (+2-4 dB) because INR parameters are tightly coupled — every parameter contributes to every output, so there are no "task-specific" weights to protect. LwF (Learning without Forgetting) was **actively harmful** on the Large model, worsening PSNR by 1-2 dB, because the teacher's output on new data conflicts directly with the new targets.
 
-**Detectors that work in the lab fail in the real world.** Deepfake-Eval-2024, the most comprehensive in-the-wild benchmark (45 hours of video, 56.5 hours of audio, 1,975 images from 88 websites in 52 languages), found that detection models lose **50% of their AUC** when tested on real social media content compared to controlled benchmarks (Chandra et al., arXiv:2503.02857). Even the best current methods top out around AUC 0.65-0.70 on heavily compressed in-the-wild video deepfakes — roughly 1 in 3 verdicts on real-world content is wrong.
+Experience Replay works because it takes a fundamentally different approach: instead of constraining *weights* (EWC) or *outputs* (LwF), it maintains the *data distribution*. The model sees past and present simultaneously. A reservoir-sampled buffer of 100,000 samples with replay weight 1.0 recovered **9.89 dB** on the Medium model — turning a useless 13.38 dB into a functional 23.27 dB, with only 23% training time overhead.
 
----
+**For detection:** Use replay-based CL when adapting to new generators. Skip EWC and LwF entirely — they fail for the same mathematical reason (shared feature spaces in detection backbones). The thesis provides validated hyperparameters: 50-100K buffer, 0.7-1.0 replay weight, reservoir sampling for temporal coverage. Not guesswork — proven on real streaming data.
 
-## Weaknesses of Current Techniques
+![How thesis findings transfer to detection](docs/diagrams/thesis_bridge.svg)
 
-Beyond the compression gap detailed above, several other significant weaknesses remain. These are not just academic gaps — they are real-world deployment blockers.
+### The Bridge to Detection
 
-### 1. Generator Arms Race
+Both compression and generation are fundamentally about neural networks representing signals. A generator maps noise to images. A compressor maps images to compact codes and back. The artifacts each process leaves behind — and the way they interact — is where thesis expertise meets detection need.
 
-New generative models appear faster than detection research can adapt. A detector trained on StyleGAN2 outputs may achieve 95%+ accuracy on that generator, but drop to near-random (50%) on Stable Diffusion 3 or Flux outputs. Fontana et al. (2025) formalized this as the **Non-Universal Deepfake Distribution Hypothesis**: each generator leaves a unique, non-transferable signature, and forward-transfer AUC drops to ~0.5 within 3 unseen generators.
+| Thesis Finding | Exact Number | Detection Application |
+|---|---|---|
+| INRs learn continuous functions, not pixels | 31-36 dB on 7.9M samples with 26-100 KB models | INR reconstruction residuals as compression-invariant forensic features |
+| Larger models forget more severely | Large: -22.81 dB vs Base: -17.25 dB | Use frozen backbones + lightweight adapters, not full fine-tuning |
+| Only Experience Replay works for CL | ER Aggressive: +9.89 dB recovery | Replay-based CL for detection; skip EWC/LwF |
+| EWC/LwF fail on shared parameters | LwF actively harmful (-1-2 dB) | Don't use regularization-based CL on detection backbones |
+| ER config: 100K buffer, 1.0 weight | 23% overhead, 23.27 dB achieved | Thesis-validated parameters for detection CL |
+| Conv AE best compression-quality tradeoff | 93.6:1 at 30.67 dB | Informs compression estimation module design |
 
-### 3. Lab vs. Wild Performance Collapse
-
-Benchmark results don't transfer to real-world conditions. Deepfake-Eval-2024 found that detectors lose 50% of their video detection AUC, 48% of audio detection AUC, and 45% of image detection AUC when moving from controlled benchmarks to in-the-wild content. The gap comes from compression, resolution variation, diverse generators, adversarial post-processing, and content types not represented in training data.
-
-### 4. Neural Compression Confounds
-
-The arrival of JPEG AI (the first international learned image coding standard, published February 2025) introduces a fundamental new challenge: neural compression artifacts closely resemble those of generative models (Cannas et al., ICCV 2025 Workshop). Pristine images compressed with JPEG AI trigger false positive rates up to 96% in existing forensic detectors. As neural codecs are adopted by platforms, current detection infrastructure will break.
-
-### 5. Lack of Explainability
-
-Most high-accuracy detectors are black-box deep learning models. They output a score but provide no explanation of *why* content was flagged. For applications like legal evidence, HR decisions, or journalism, a confidence score alone is insufficient — stakeholders need interpretable evidence.
-
-### 6. Evaluation Fragmentation
-
-Different papers use different datasets, protocols, preprocessing, and metrics. Fair comparison is difficult. CDDB (Li et al., WACV 2023) and Deepfake-Eval-2024 are steps toward standardization, but the community lacks consensus benchmarks that reflect real-world conditions.
+The thesis contribution isn't just "experience with compression." It's a systematic understanding — backed by three architectures, exact metrics, and controlled experiments — of how information degrades through neural reconstruction, which signal components survive, and how to design learning systems that don't forget.
 
 ---
 
-## Our Project
+## What We're Building
 
-This project takes a research-driven approach to detection: instead of treating it as a black-box classification problem, we leverage knowledge of *how* generative models create artifacts. By understanding the relationship between generation architectures, their loss functions, and the specific visual signatures they produce, we build detectors that are **interpretable** and **robust**.
+This project applies thesis findings to build a detection system with three principles:
 
-### What We're Building
+**1. Explainability** — Every verdict includes which artifacts were detected, which detectors fired, and why. Not just "fake" — but *what kind* of fake and *which signals* indicate it.
 
-An AI-generated media detection system with three guiding principles:
+**2. Compression awareness** — Measure compression first, then adjust detection. Don't treat compression as noise to augment against — treat it as a measurable quantity that modulates confidence.
 
-1. **Explainability first** — Every verdict comes with a human-readable explanation: which artifacts were detected, which detectors fired, and why the system reached its conclusion. Not just "fake" — but "pixel-loss smoothing artifacts detected in the eye region with 0.78 confidence, consistent with GAN generation."
+**3. Multi-class classification** — Not just real vs. fake: REAL / GAN-GENERATED / DIFFUSION-GENERATED, providing intelligence about which tools created the content.
 
-2. **Compression awareness** — Real-world content is always compressed. Rather than treating compression as an afterthought, we build compression estimation directly into the detection pipeline. The system estimates how heavily content has been compressed and adjusts its confidence accordingly, preventing the false positives that plague other detectors on social media content.
+![Detection pipeline architecture](docs/diagrams/detection_pipeline.svg)
 
-3. **Multi-class classification** — The system doesn't just distinguish real from fake; it identifies the *type* of generation (REAL / GAN-GENERATED / DIFFUSION-GENERATED), which provides actionable intelligence about the tools used to create the content.
+The key innovation: the compression estimator runs *before* scoring. It analyzes four signals — block boundary strength, quantization periodicity, high-frequency energy loss, flat-region posterization — and produces an attenuation factor. Compression-sensitive detectors (smoothing, reconstruction error, noise residual) are attenuated. Compression-resistant signals (spectral fingerprint, mode collapse) pass through unchanged.
 
-### Detection Pipeline
-
-```
-Input (image/video)
-    |
-    v
-Face Detection (OpenCV Haar Cascade)
-    |
-    v
-Face Extraction & Normalization (224x224 RGB)
-    |
-    +---> Smoothing Detector -------> score [0, 1]  (weight: 0.5)  --+
-    |         FFT, Sobel, texture variance                            |
-    |                                                                 +-- GAN Score
-    +---> Texture Detector ---------> score [0, 1]  (weight: 0.1)  --+
-    |         LBP, GLCM, spectral entropy                            |
-    |                                                                 |
-    +---> Mode Collapse Detector ---> score [0, 1]  (weight: 0.4)  --+
-    |         Symmetry, autocorrelation
-    |
-    +---> Diffusion Detector -------> score [0, 1]  -- Diffusion Score
-    |         Reconstruction error, spectral fingerprint,
-    |         noise residual, patch consistency
-    |
-    +---> Compression Estimator ----> level [0, 1]  -- Attenuation Factor
-    |         Blockiness, quantization, HF loss,
-    |         flat region posterization
-    |
-    v
-Compression-Adjusted Scoring --> 3-Class Decision
-    |
-    v
-REAL / GAN-GENERATED / DIFFUSION-GENERATED + Explanation
-```
-
-The compression estimator attenuates scores from compression-sensitive detectors (smoothing, reconstruction error, noise residual) while leaving compression-resistant signals (spectral fingerprint, mode collapse) unchanged. This prevents heavily compressed but authentic video from triggering false positives.
-
-### Current Status
-
-**Stage:** Research Prototype (functional, not production-ready)
-
-**What works:**
-- Five hand-crafted analysis modules (smoothing, texture, mode collapse, diffusion, compression estimation)
-- 3-class classifier: REAL / GAN-GENERATED / DIFFUSION-GENERATED
-- Compression-aware score adjustment to reduce false positives on compressed content
-- Face extraction pipeline (OpenCV Haar Cascade)
-- Video analysis pipeline with per-frame breakdown and diagnostic visualizations
-- Synthetic test dataset (60 generated samples across 3 artifact types)
-
-**What's next:**
-- Deep learning backbone (CLIP ViT or EfficientNet-B4) to replace/augment hand-crafted features
-- Training on real deepfake datasets (FaceForensics++, CelebDF-v2, DFDC)
-- Continual learning framework for adapting to new generators
-- Real-time interview integrity detection (lip-sync, eye gaze, audio analysis)
-- Published Python package (PyPI)
+Raw scores are preserved alongside adjusted scores — full transparency into how compression affected the verdict.
 
 ---
 
 ## Current Results
 
-### Synthetic Data Evaluation
+**Stage:** Research prototype, hand-crafted features. The deep learning and INR components are on the roadmap.
 
-Results on synthetic test data (60 samples, hand-crafted feature detectors):
+### Synthetic Data
 
 | Detector | Real Faces | Generated (Pixel Loss) | Generated (Adversarial) |
 |---|---|---|---|
@@ -365,112 +310,62 @@ Results on synthetic test data (60 samples, hand-crafted feature detectors):
 | Texture | ~0.45 | ~0.50 | ~0.48 |
 | Mode Collapse | 0.567 | 0.620 | 0.779 |
 
-| Metric | Value |
-|---|---|
-| Real face avg score | ~0.617 |
-| Generated avg score | ~0.759 |
-| Score gap | ~0.14 |
-| Classification threshold | 0.60 |
+Score gap between real and generated: ~0.14 — narrow, not production-ready on hand-crafted features alone.
 
-The narrow 0.14 score gap between real and generated content means the system is not yet reliable for real-world deployment on hand-crafted features alone. The smoothing detector shows the best single-feature discrimination, while the mode collapse detector is strongest for adversarial-loss artifacts specifically.
+### Real-World Compressed Video
 
-### Real-World Testing
+We tested on authentic compressed video from social media:
 
-We tested the detector on authentic compressed video sourced from social media to validate real-world performance.
+**Before compression awareness:** Incorrectly classified as DIFFUSION-GENERATED (56/74 frames, 0.609 confidence). Reconstruction error fired at 0.85-1.0 on every frame — codec smoothing indistinguishable from diffusion output.
 
-**Before compression awareness:** The model incorrectly classified authentic video as DIFFUSION-GENERATED (56/74 frames, 0.609 confidence). The reconstruction error sub-detector fired at 0.85-1.0 on nearly every frame — video codec compression made the frames appear "smooth" in ways indistinguishable from diffusion model output to our hand-crafted proxy.
+**After compression awareness:** Compression estimator detects heavy codec compression, attenuates sensitive scores, adjusted diffusion score drops below threshold. Correctly classified as REAL.
 
-**After compression awareness:** The compression estimator detects the heavy codec compression, attenuates the compression-sensitive scores, and the adjusted diffusion score drops below the classification threshold. The system now correctly classifies the video as REAL.
+This validated the thesis-informed approach: measuring compression explicitly, rather than hoping features survive it.
 
-This real-world test exposed the fundamental limitation: hand-crafted features cannot distinguish between "smooth because compressed" and "smooth because AI-generated" without explicitly measuring and accounting for compression level.
-
-### Target Metrics (After Deep Learning Integration)
+### Targets (After Deep Learning + INR Integration)
 
 | Metric | Target |
 |---|---|
 | Accuracy (FaceForensics++) | > 92% |
 | AUC-ROC | > 0.95 |
-| F1 Score | > 0.90 |
 | False Positive Rate | < 5% |
-| Inference Latency (GPU) | < 500ms |
-| Inference Latency (CPU) | < 2s |
+| Compression robustness (QF 40) | < 5% AUC drop |
 
 ---
 
-## Connecting Compression Research to AI Media Detection
+## Overcoming Compression: Current Research and Where We're Headed
 
-This project sits at the intersection of two research areas: **AI-generated media detection** and **data compression** — the focus of the lead researcher's master thesis on implicit neural representations (INRs) for spatio-temporal data compression at BTU Cottbus-Senftenberg.
+Three research directions have emerged in 2024-2025:
 
-### Why These Two Fields Converge
+### 1. Compression-Aware Training
+Simulate compression during training. Differentiable JPEG layers (Shin et al., ICLR 2025) enable end-to-end gradient flow through compression with only 128 additional parameters. Random JPEG QF [40-100] augmentation yields 6-8% AUC improvement.
 
-As described in [How Compressed Media Breaks Detection](#how-compressed-media-breaks-detection), compression is the primary reason detection systems fail in the real world. This is not a peripheral issue — it is the central bottleneck. Understanding compression at a deep, mathematical level is therefore not just helpful for detection; it is *necessary*.
+### 2. Mid-Frequency Forensic Analysis
+The key insight across multiple studies: low frequencies survive compression but lack discriminative power. High frequencies are destroyed. **Mid-frequency bands (DCT coefficients 8-32)** carry the best balance. FIRE (CVPR 2025) achieves 100% AUC on diffusion benchmarks by targeting this sweet spot.
 
-Both compression and AI generation are fundamentally about **how neural networks represent signals**. A generative model learns to map noise to realistic images; a neural compressor learns to map images to compact representations and back. The artifacts each process leaves behind — and the way those artifacts interact when generated content is subsequently compressed — is where the two fields intersect.
+### 3. Semantic-Level Detection
+CLIP-based detectors are "basically insensitive to compression, no matter JPEG or WebP" (Cozzolino et al., CVPRW 2024). Semantic features survive what pixel-level features don't.
 
-### The Master Thesis Connection
+### Our Direction
 
-The lead researcher's thesis, *"Concurrent Neural Network Training for Compression of Spatio-Temporal Data"*, studies how implicit neural representations (INRs) — small neural networks that learn to represent signals as continuous functions — behave under extreme compression ratios (62,000:1 to 242,000:1). Key findings that directly inform this detection project:
+**Compression estimation and attenuation** — Already implemented. Measure compression level, attenuate sensitive scores, preserve robust ones.
 
-- **INRs learn continuous function approximations** of signals rather than memorizing pixel values. This means INR-based analysis captures structural patterns that survive lossy compression — exactly the kind of features needed for compression-robust detection.
-- **Catastrophic forgetting in streaming/online settings** is a real and severe problem for neural networks processing sequential data. Experience Replay is the only effective continual learning strategy for the INR domain; regularization methods (EWC, LwF) fail due to shared parameter spaces. This transfers directly to the detection domain, where detectors must continuously adapt to new generators without forgetting how to detect old ones.
-- **Larger models forget more severely** — a counter-intuitive finding with direct implications for detection architecture design: favor small, frozen backbones with lightweight adapters over large fine-tuned models.
+**INR forensic features** — Next phase. Fit small INRs (adapted from thesis architectures: 2 → 64 → 64 → 32 → 3) to images and extract 64-dimensional reconstruction residual features. AI-generated images should yield systematically different residual distributions than real images — and these residuals should survive compression because INRs learn continuous structure, not pixels.
 
-### How These Findings Transfer
+**Replay-based continual learning** — When new generators appear, adapt via experience replay (thesis-proven parameters: 100K feature buffer, 1.0 replay weight — the ER Aggressive config that recovered 9.89 dB) with LoRA adapters per generator family. No EWC. No LwF. These fail for shared-parameter architectures — the thesis proved it, and the detection literature confirms it independently (DevFD, NeurIPS 2025).
 
-| Thesis Finding (INR Compression) | Detection Application |
-|---|---|
-| INRs learn continuous functions, not pixels | INR-based features should survive lossy compression |
-| Experience Replay is the only effective CL strategy | Use replay-based continual learning for detection, not regularization |
-| Larger models forget more severely | Use frozen backbones + lightweight adapters, not full fine-tuning |
-| EWC/LwF fail for shared parameter spaces | Avoid regularization-based CL for detection backbones |
-| Compression ratio correlates with model capacity | INR compression efficiency itself may be a forensic signal |
+### The Neural Compression Wildcard
 
-The thesis provides both the theoretical framework and practical strategies for addressing the dual challenge: maintaining robustness to compression (a signal reconstruction problem) while adapting to evolving generators (a continual learning problem).
+JPEG AI — the first international learned image coding standard (ISO, February 2025) — introduces neural codec artifacts that resemble generative model artifacts. Cannas et al. (ICCV 2025 Workshop) showed 96% false positive rates in existing detectors on JPEG AI-compressed pristine images. As platforms adopt neural codecs, every current detector will break.
 
----
-
-## Overcoming Compression: Current Research and Our Direction
-
-### The Research Landscape
-
-Three converging research directions have emerged in 2024-2025 to address the compression-detection gap:
-
-**1. Compression-Aware Training**
-
-The most widely adopted approach: simulate compression during training so the model learns to detect artifacts even after degradation. Differentiable JPEG layers (Shin et al., ICLR 2025) enable end-to-end gradient flow through compression simulation with only 128 additional parameters. Data augmentation with random JPEG quality factors [40-100] is now standard practice, yielding 6-8% AUC improvements on compressed benchmarks.
-
-**2. Mid-Frequency Forensic Analysis**
-
-A consistent finding across multiple studies: **low frequencies survive compression but lack discriminative power; very high frequencies are destroyed by compression; mid-frequency bands (DCT coefficients 8-32) carry the best balance of forensic signal and compression resilience.** Methods like FIRE (CVPR 2025) that adaptively focus on mid-frequencies achieve 100% AUC on diffusion detection benchmarks while maintaining robustness to JPEG, cropping, blur, and noise.
-
-**3. Semantic-Level Detection**
-
-Foundation models like CLIP encode high-level features that are inherently compression-robust because they operate at the semantic level rather than the pixel level. CLIP-based detectors show +13% AUC on laundered/compressed data (Cozzolino et al., CVPRW 2024) and are "basically insensitive to compression, no matter JPEG or WebP, and resizing."
-
-### How We Address It
-
-Our approach to the compression problem operates at multiple levels:
-
-**Compression estimation and score attenuation** — Rather than trying to undo compression or ignore it, we explicitly measure it. Our compression estimator analyzes four signals (block boundary strength, quantization periodicity, high-frequency energy loss, flat-region posterization) to estimate how heavily an image has been compressed. This estimate is used to attenuate the scores of compression-sensitive detectors while leaving compression-resistant signals untouched.
-
-**Separation of raw and adjusted scores** — The system preserves raw detector scores alongside compression-adjusted scores. This transparency allows users (and future model components) to see exactly how compression affected the verdict, rather than hiding the adjustment behind a single score.
-
-**Architecture designed for compression resilience** — Our roadmap prioritizes compression-robust features: mid-frequency spectral analysis, foundation model semantic features, and signal-level analysis approaches that target the structural properties of content rather than fragile high-frequency traces.
-
-### The Emerging Challenge: Neural Compression
-
-A new wildcard is JPEG AI — the first international learned image coding standard (ISO, February 2025). Neural compression artifacts closely resemble those of generative models. Cannas et al. (ICCV 2025 Workshop) showed that pristine images compressed with JPEG AI trigger false positive rates up to 96% in existing forensic detectors. As platforms begin adopting neural codecs, the entire detection landscape will shift again.
-
-This is an **urgent and underexplored** research gap. Very few detection methods have been evaluated against neural compression, and current benchmarks don't include JPEG AI conditions. Our work on understanding the interplay between neural representation, compression, and forensic signal puts us in a unique position to address this challenge as it emerges.
+Our thesis background in neural compression puts us in a unique position to address this emerging challenge before it arrives at scale.
 
 ### Open Problems
 
-Despite recent progress, substantial gaps remain:
-
-1. **CL under realistic compression** — No published work evaluates continual deepfake detection methods after data passes through actual social media pipelines. CL methods achieving 0.91 C-AUC on clean data may perform far worse in the wild.
-2. **Video-specific compression effects** — Most compression-robustness research focuses on JPEG image compression. Video codec effects (inter-frame prediction, motion compensation, variable QP per macroblock) are significantly understudied.
-3. **Audio-visual consistency under dual compression** — For interview and video-call detection, audio (Opus/AAC) and video (H.264/VP9) are compressed independently. How synchronization cues survive this dual pipeline is unknown.
-4. **Dynamic platform pipelines** — Social media compression parameters change frequently. No adaptive method can handle unknown or evolving compression in a zero-shot manner.
+1. **CL under realistic compression** — No published work evaluates continual detection after social media compression. CL methods achieving 0.91 C-AUC on clean data may fail in the wild.
+2. **Video-specific compression** — Most robustness research targets JPEG images. Video codec effects (inter-frame prediction, motion compensation, variable QP) are understudied.
+3. **Audio-visual dual compression** — For interview detection, audio (Opus/AAC) and video (H.264/VP9) compress independently. Synchronization cue survival is unknown.
+4. **Dynamic platform pipelines** — Compression parameters change without notice. No method handles unknown or evolving compression zero-shot.
 
 ---
 
