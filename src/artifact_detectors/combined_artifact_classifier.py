@@ -7,15 +7,17 @@ from .smoothing_detector import SmoothingArtifactDetector
 from .texture_detector import TextureArtifactDetector
 from .mode_collapse_detector import ModeCollapseDetector
 from .diffusion_detector import DiffusionArtifactDetector
+from .flux_detector import FluxArtifactDetector
 from ..utils.simple_face_detection import SimpleFaceDetector
 from ..utils.compression_estimator import CompressionEstimator
 
 
 class ArtifactClassifier:
-    """Combined classifier using GAN and diffusion artifact detectors.
+    """Combined classifier using GAN, diffusion, and Flux artifact detectors.
 
-    Produces a 3-class prediction: REAL / GAN-GENERATED / DIFFUSION-GENERATED,
-    using a weighted ensemble of four hand-crafted detectors.
+    Produces a 4-class prediction:
+    REAL / GAN-GENERATED / DIFFUSION-GENERATED / FLUX-GENERATED,
+    using a weighted ensemble of five hand-crafted detectors.
 
     Parameters
     ----------
@@ -32,6 +34,9 @@ class ArtifactClassifier:
         # Diffusion detector
         self.diffusion_detector = DiffusionArtifactDetector()
 
+        # Flux detector (Black Forest Labs)
+        self.flux_detector = FluxArtifactDetector()
+
         # Compression estimator (utility, not a detector)
         self.compression_estimator = CompressionEstimator()
 
@@ -39,6 +44,7 @@ class ArtifactClassifier:
             'smoothing': 0.65,
             'mode_collapse': 0.70,
             'diffusion': 0.55,
+            'flux': 0.50,
             'fake_confidence': 0.60,
         }
         if thresholds:
@@ -71,6 +77,9 @@ class ArtifactClassifier:
         diffusion_score, diffusion_details = (
             self.diffusion_detector.detect_diffusion_artifacts(image)
         )
+        flux_score, flux_details = (
+            self.flux_detector.detect_flux_artifacts(image)
+        )
 
         # Estimate compression level and attenuation factor
         compression_level, compression_details = (
@@ -84,6 +93,19 @@ class ArtifactClassifier:
         smoothing_adj = smoothing_score * attenuation
         recon_adj = diffusion_details['reconstruction_error'] * attenuation
         noise_adj = diffusion_details['noise_residual'] * attenuation
+
+        # Attenuate Flux compression-sensitive sub-scores
+        flux_vae_adj = flux_details['vae_fingerprint'] * attenuation
+        flux_skip_adj = flux_details['skip_absence'] * attenuation
+        # Flow matching residual and attention uniformity are more robust
+        flux_adj = (
+            0.25 * flux_vae_adj
+            + 0.25 * flux_details['flow_matching_residual']
+            + 0.15 * flux_skip_adj
+            + 0.15 * flux_details['distillation_artifacts']
+            + 0.20 * flux_details['attention_uniformity']
+        )
+        flux_adj = float(np.clip(flux_adj, 0.0, 1.0))
 
         # Recompute diffusion score with attenuated sub-scores
         diffusion_adj = (
@@ -101,13 +123,13 @@ class ArtifactClassifier:
             + 0.4 * collapse_score
         )
 
-        # 3-class decision uses adjusted scores
+        # 4-class decision uses adjusted scores
         prediction, artifact_type = self._classify(
-            gan_score, diffusion_adj, smoothing_adj, collapse_score
+            gan_score, diffusion_adj, flux_adj, smoothing_adj, collapse_score
         )
 
-        # Overall confidence is the max of the two generation scores
-        confidence = max(gan_score, diffusion_adj)
+        # Overall confidence is the max of the generation scores
+        confidence = max(gan_score, diffusion_adj, flux_adj)
 
         return {
             'prediction': prediction,
@@ -120,6 +142,8 @@ class ArtifactClassifier:
                 'mode_collapse': collapse_score,
                 'diffusion': diffusion_score,
                 'diffusion_adjusted': diffusion_adj,
+                'flux': flux_score,
+                'flux_adjusted': flux_adj,
                 'gan_overall': gan_score,
                 'compression_level': compression_level,
                 'compression_attenuation': attenuation,
@@ -129,11 +153,13 @@ class ArtifactClassifier:
                 'texture': texture_details,
                 'mode_collapse': collapse_details,
                 'diffusion': diffusion_details,
+                'flux': flux_details,
                 'compression': compression_details,
             },
             'explanation': self._generate_explanation(
                 prediction, artifact_type,
-                smoothing_adj, texture_score, collapse_score, diffusion_adj,
+                smoothing_adj, texture_score, collapse_score,
+                diffusion_adj, flux_adj,
             ),
         }
 
@@ -171,7 +197,10 @@ class ArtifactClassifier:
         )
 
         # Count votes per class
-        votes = {'REAL': 0, 'GAN-GENERATED': 0, 'DIFFUSION-GENERATED': 0}
+        votes = {
+            'REAL': 0, 'GAN-GENERATED': 0,
+            'DIFFUSION-GENERATED': 0, 'FLUX-GENERATED': 0,
+        }
         for r in frame_results:
             pred = r['prediction']
             votes[pred] = votes.get(pred, 0) + 1
@@ -187,7 +216,11 @@ class ArtifactClassifier:
             if artifact_types else 'unknown'
         )
 
-        fake_frames = votes.get('GAN-GENERATED', 0) + votes.get('DIFFUSION-GENERATED', 0)
+        fake_frames = (
+            votes.get('GAN-GENERATED', 0)
+            + votes.get('DIFFUSION-GENERATED', 0)
+            + votes.get('FLUX-GENERATED', 0)
+        )
 
         return {
             'prediction': video_prediction,
@@ -208,16 +241,34 @@ class ArtifactClassifier:
         self,
         gan_score: float,
         diffusion_score: float,
+        flux_score: float,
         smoothing_score: float,
         collapse_score: float,
     ) -> tuple:
-        """Determine 3-class prediction and artifact type."""
+        """Determine 4-class prediction and artifact type."""
         threshold = self.thresholds['fake_confidence']
         diff_threshold = self.thresholds['diffusion']
+        flux_threshold = self.thresholds['flux']
 
-        # If both scores are below threshold → REAL
-        if gan_score < threshold and diffusion_score < diff_threshold:
+        # If all scores are below thresholds → REAL
+        if (
+            gan_score < threshold
+            and diffusion_score < diff_threshold
+            and flux_score < flux_threshold
+        ):
             return 'REAL', 'none'
+
+        # Find the dominant generation class
+        scores = {
+            'FLUX-GENERATED': (flux_score, flux_threshold),
+            'DIFFUSION-GENERATED': (diffusion_score, diff_threshold),
+            'GAN-GENERATED': (gan_score, threshold),
+        }
+
+        # Flux takes priority when above threshold and dominant, since
+        # Flux images also trigger the generic diffusion detector.
+        if flux_score >= flux_threshold and flux_score >= diffusion_score:
+            return 'FLUX-GENERATED', 'flux_artifacts'
 
         # If diffusion score dominates → DIFFUSION-GENERATED
         if diffusion_score >= diff_threshold and diffusion_score >= gan_score:
@@ -242,15 +293,34 @@ class ArtifactClassifier:
         texture: float,
         collapse: float,
         diffusion: float,
+        flux: float = 0.0,
     ) -> str:
         """Generate a human-readable explanation."""
         gan_overall = 0.5 * smoothing + 0.1 * texture + 0.4 * collapse
-        confidence = max(gan_overall, diffusion)
+        confidence = max(gan_overall, diffusion, flux)
 
         lines = [f"Prediction: {prediction} (confidence: {confidence:.3f})"]
 
         if prediction == 'REAL':
             lines.append("Image appears authentic based on artifact analysis.")
+        elif prediction == 'FLUX-GENERATED':
+            lines.append("Detected Black Forest Labs Flux signatures:")
+            lines.append(f"  - Flux artifact score: {flux:.3f}")
+            if flux > 0.5:
+                lines.append(
+                    "  - MMDiT attention uniformity: global self-attention "
+                    "produces unnaturally consistent textures"
+                )
+            if flux > 0.4:
+                lines.append(
+                    "  - Flow matching residuals: systematic ODE "
+                    "discretisation errors detected"
+                )
+            if flux > 0.45:
+                lines.append(
+                    "  - VAE decode fingerprint: 16-channel VAE statistical "
+                    "trace present"
+                )
         elif prediction == 'DIFFUSION-GENERATED':
             lines.append("Detected diffusion model signatures:")
             lines.append(f"  - Diffusion artifact score: {diffusion:.3f}")

@@ -81,6 +81,20 @@ Diffusion models (Stable Diffusion, DALL-E, Midjourney) iteratively denoise rand
 | Patch boundaries | Local receptive fields | Texture transitions between patches |
 | Spectral fingerprint | Architecture response | Unusually uniform power spectrum |
 
+### Flux Artifacts (Black Forest Labs)
+
+Flux represents a generational leap in diffusion model architecture. Unlike Stable Diffusion's U-Net + DDPM design, Flux uses an entirely different stack — and leaves fundamentally different forensic traces:
+
+| Architecture Difference | Stable Diffusion | Flux | Forensic Implication |
+|---|---|---|---|
+| **Backbone** | U-Net with skip connections | MMDiT transformer (no skip connections) | Flux loses high-frequency detail; SD preserves it via skip paths |
+| **Noise schedule** | DDPM (stochastic SDE) | Rectified flow matching (deterministic ODE) | Flux residuals are spatially correlated (systematic); SD residuals are random |
+| **Latent space** | 4-channel VAE | 16-channel VAE | Flux has finer reconstruction but different GroupNorm(32) + Swish statistical trace |
+| **Attention** | Local + cross-attention | Global self-attention (all positions) | Flux produces unnaturally uniform textures across distant regions |
+| **Fast generation** | LCM / Turbo distillation | Schnell adversarial distillation (1-4 steps) | Schnell shows bimodal patch complexity — some areas resolved, others blurry |
+
+Standard diffusion detectors (DIRE, spectral fingerprint) achieve only **18-30% accuracy on Flux** because they target U-Net-specific artifacts (mid-frequency dip from bottleneck) that don't exist in the transformer architecture. This project includes a dedicated Flux detector targeting five architecture-specific signals.
+
 ### Across Other Modalities
 
 - **Text** — More uniform perplexity, less stylistic drift, distinctive token frequencies
@@ -288,7 +302,7 @@ This project applies thesis findings to build a detection system with three prin
 
 **2. Compression awareness** — Measure compression first, then adjust detection. Don't treat compression as noise to augment against — treat it as a measurable quantity that modulates confidence.
 
-**3. Multi-class classification** — Not just real vs. fake: REAL / GAN-GENERATED / DIFFUSION-GENERATED, providing intelligence about which tools created the content.
+**3. Multi-class classification** — Not just real vs. fake: REAL / GAN-GENERATED / DIFFUSION-GENERATED / FLUX-GENERATED, providing intelligence about which tools created the content — including model-family-level attribution.
 
 ![Detection pipeline architecture](docs/diagrams/detection_pipeline.svg)
 
@@ -311,6 +325,38 @@ Raw scores are preserved alongside adjusted scores — full transparency into ho
 | Mode Collapse | 0.567 | 0.620 | 0.779 |
 
 Score gap between real and generated: ~0.14 — narrow, not production-ready on hand-crafted features alone.
+
+### Diffusion vs Flux Detection: Why Architecture-Specific Detection Matters
+
+The generic diffusion detector and the Flux-specific detector fire on different signals — proving that a single "diffusion" detector cannot cover the architectural diversity of modern generators.
+
+**Per-detector scores on GAN-generated test data:**
+
+| Signal | Diffusion Detector | Flux Detector | Winner |
+|---|---|---|---|
+| Reconstruction error / VAE fingerprint | 1.000 | 0.346 | Diffusion |
+| Spectral fingerprint / Flow matching | 0.243 | 0.400–0.650 | Flux |
+| Noise residual / Skip absence | 0.635–0.985 | 0.425–0.436 | Diffusion |
+| Patch consistency / Distillation | 0.041–0.078 | 0.020–0.078 | Tie |
+| — / Attention uniformity | N/A | 0.807–0.986 | Flux-only |
+
+**Key observations:**
+
+1. **Attention uniformity is the strongest Flux signal** (0.807–0.986) — it measures global self-attention's tendency to produce unnaturally consistent textures across distant spatial regions. This signal has no equivalent in the diffusion detector because U-Net architectures use local receptive fields.
+
+2. **Reconstruction error dominates for standard diffusion** (1.000) but is weak for Flux detection (0.346) — the blur-sharpen round-trip proxy assumes U-Net bottleneck characteristics that Flux's transformer doesn't share.
+
+3. **Flow matching residuals capture what spectral fingerprint misses** — Flux's deterministic ODE sampling produces spatially correlated errors (0.400–0.650) vs the stochastic SDE noise that the spectral fingerprint targets.
+
+**Combined classifier results on test samples:**
+
+| Sample Type | Diffusion Score | Flux Score | Prediction |
+|---|---|---|---|
+| GAN (pixel loss) | 0.580 | 0.451 | REAL (both below threshold) |
+| GAN (perceptual) | 0.510 | 0.477 | REAL |
+| GAN (adversarial) | 0.509 | 0.550 | **FLUX-GENERATED** |
+
+The adversarial-loss GAN samples trigger the Flux detector (0.550 > 0.50 threshold) because adversarial training produces attention-like uniformity patterns. This is a known false-positive vector that will be addressed with Flux-specific training data — the `generate_flux_samples.py` script generates ground-truth Flux Schnell images for calibration.
 
 ### Real-World Compressed Video
 

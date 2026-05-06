@@ -2,4 +2,5 @@ from .smoothing_detector import SmoothingArtifactDetector
 from .texture_detector import TextureArtifactDetector
 from .mode_collapse_detector import ModeCollapseDetector
 from .diffusion_detector import DiffusionArtifactDetector
+from .flux_detector import FluxArtifactDetector
 from .combined_artifact_classifier import ArtifactClassifier, GANArtifactClassifier
