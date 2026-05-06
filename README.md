@@ -1,5 +1,17 @@
 # AI-Generated Media Detector
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Detects-Flux%20(BFL)-black?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyTDIgNy4xNzVWMTYuODI1TDEyIDIyTDIyIDE2LjgyNVY3LjE3NUwxMiAyWk00IDE1LjY1VjguMzVMMTIgNC4xNzVMMjAgOC4zNVYxNS42NUwxMiAxOS44MjVMNCAxNS42NVoiLz48L3N2Zz4=" alt="Flux" />
+  <img src="https://img.shields.io/badge/Detects-Stable%20Diffusion-a855f7?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMTIgMkMxMiAyIDE4IDYgMTggMTJTMTIgMjIgMTIgMjJDMTIgMjIgNiAxOCA2IDEyUzEyIDIgMTIgMloiLz48L3N2Zz4=" alt="Stable Diffusion" />
+  <img src="https://img.shields.io/badge/Detects-GANs-ec4899?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0tMiAxNWwtNS01IDEuNDEtMS40MUwxMCAxNC4xN2w3LjU5LTcuNTlMMTkgOGwtOSA5eiIvPjwvc3ZnPg==" alt="GANs" />
+  <img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License" />
+</p>
+
+<p align="center">
+  <strong>4-class detection</strong>: REAL · GAN-GENERATED · DIFFUSION-GENERATED · FLUX-GENERATED
+</p>
+
 *A compression-aware deepfake detection system born from research into how neural networks compress, reconstruct, and forget signals.*
 
 ---
